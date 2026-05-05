@@ -54,7 +54,9 @@ public static class ServiceHost
                 builder.Services.AddWindowsService(o => o.ServiceName = Installer.ServiceName);
             }
 
-            builder.Services.AddMcpServer().WithToolsFromAssembly();
+            builder.Services.AddMcpServer()
+                .WithHttpTransport()
+                .WithToolsFromAssembly();
 
             builder.WebHost.ConfigureKestrel(options =>
             {
