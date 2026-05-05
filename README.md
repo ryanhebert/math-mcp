@@ -13,26 +13,32 @@ Distributed as a single self-contained `MathMcp.exe`. No .NET runtime install re
 ## Install
 
 1. Download `MathMcp.exe` to anywhere on the machine (e.g. `Downloads\`).
-2. Right-click → **Run as administrator**. (If launched without admin, the exe re-prompts via UAC.)
+2. Double-click it. The .exe has the `requireAdministrator` manifest, so Windows shows the UAC prompt automatically. Accept it.
 
 That's it. The installer:
 
-- Copies itself to `C:\Program Files\MathMcp\`
-- Generates a self-signed cert (CN/SAN = `localhost`, 1-year validity) at `certs\cert.pfx`
-- Writes default `config.json`
-- Adds Windows Firewall inbound TCP rules for ports 52080 and 52443
-- Registers and starts the `MathMcp` Windows Service (auto-start on boot)
-- Prints the endpoint URLs
+- Stops and removes any existing `MathMcp` service (idempotent — safe to re-run for upgrades)
+- Copies itself to `C:\Program Files\MathMcp\` and strips Mark-of-the-Web from the copy
+- Generates a self-signed cert (CN/SAN = `localhost`, 1-year validity) at `certs\cert.pfx` (only on first install)
+- Writes default `config.json` (preserved on re-install)
+- Adds Windows Firewall inbound TCP rules for the configured HTTP/HTTPS ports
+- Registers and starts the `MathMcp` Windows Service (auto-start on boot, runs as virtual account `NT SERVICE\MathMcp`)
+- Waits for the service to reach `RUNNING` and prints the endpoint URLs
 
 The service binds to `0.0.0.0`, so it's reachable from the network.
 
+If a previous install is stuck "marked for deletion" (typically because `services.msc` is open elsewhere), the installer waits up to 30 seconds for the registration to fully clear and prints clear instructions if it can't proceed.
+
 ## Endpoints
 
-| Endpoint                                  | Method | Purpose                                       |
-|-------------------------------------------|--------|-----------------------------------------------|
-| `http://<host>:52080/`  /  `https://<host>:52443/`  | GET    | Service info JSON (version, ports, tools, uptime) |
-| `http://<host>:52080/health`              | GET    | Health probe (`{"status":"ok",...}`)          |
-| `http://<host>:52080/mcp`  /  `https://<host>:52443/mcp` | POST/SSE | MCP Streamable HTTP transport |
+| Path       | Method   | Purpose                                                                 |
+|------------|----------|-------------------------------------------------------------------------|
+| `/`        | GET      | HTML dashboard (status pill, live uptime, ports, tools, endpoint links) |
+| `/info`    | GET      | Service metadata as JSON (version, ports, tools, uptime, machine, OS)   |
+| `/health`  | GET      | Health probe (`{"status":"ok","uptimeSeconds":...}`)                    |
+| `/mcp`     | POST/SSE | MCP Streamable HTTP transport                                           |
+
+All endpoints are served on both `http://<host>:52080` and `https://<host>:52443`.
 
 Remote clients connecting by IP or hostname will see a TLS hostname-mismatch warning (the cert is only valid for `localhost`). Either skip TLS verification in your MCP client or use the plain-HTTP listener.
 
