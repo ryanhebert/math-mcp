@@ -102,7 +102,19 @@ public static class ServiceHost
 
         var tools = new[] { "add", "subtract", "multiply", "divide" };
 
-        app.MapGet("/", () => Results.Json(new
+        var pageModel = new IndexPageModel(
+            Version: version,
+            MachineName: Environment.MachineName,
+            Os: Environment.OSVersion.ToString(),
+            HttpPort: config.HttpPort,
+            HttpsPort: config.HttpsPort,
+            StartedAtIso: StartedAtUtc.ToString("O"));
+
+        var rendered = IndexPage.Render(pageModel);
+
+        app.MapGet("/", () => Results.Content(rendered, "text/html; charset=utf-8"));
+
+        app.MapGet("/info", () => Results.Json(new
         {
             service = "Math MCP Server",
             version,
