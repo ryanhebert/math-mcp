@@ -39,25 +39,35 @@ public static class Installer
         Console.WriteLine("Math MCP Server installer");
         Console.WriteLine("-------------------------");
 
-        if (ServiceExists())
+        // Always tear down any existing install to fresh state. This is the most
+        // reliable way to handle upgrades and recover from partially-broken state.
+        if (!StopAndRemoveExistingService())
         {
-            Console.WriteLine("Stopping existing service...");
-            RunSc("stop", ServiceName);
-            WaitForServiceStopped();
+            return 1;
         }
 
         Directory.CreateDirectory(InstallDir);
         Directory.CreateDirectory(CertDir);
         Directory.CreateDirectory(LogDir);
 
-        // Only copy if source != destination (re-running installer from inside install dir is a no-op for the exe).
         if (!PathsEqual(sourceExe, InstalledExePath))
         {
             Console.WriteLine($"Copying executable to {InstalledExePath}");
-            File.Copy(sourceExe, InstalledExePath, overwrite: true);
+            try
+            {
+                File.Copy(sourceExe, InstalledExePath, overwrite: true);
+            }
+            catch (IOException ex)
+            {
+                Console.Error.WriteLine($"Failed to copy exe: {ex.Message}");
+                Console.Error.WriteLine("If the file is locked, close any process running it and re-run install.");
+                return 1;
+            }
         }
 
-        // Load existing config or create a new one with defaults.
+        // Strip Mark-of-the-Web ADS so the installed binary isn't blocked.
+        StripMarkOfTheWeb(InstalledExePath);
+
         var config = File.Exists(ConfigPath) ? Config.Load(ConfigPath) : new Config();
         var configChanged = !File.Exists(ConfigPath);
 
@@ -94,43 +104,149 @@ public static class Installer
             Console.WriteLine($"Preserving existing cert: {CertPath}");
         }
 
-        if (!ServiceExists())
-        {
-            Console.WriteLine($"Registering Windows Service: {ServiceName}");
-            // sc.exe option syntax: `name=` and value are separate tokens (the `=` is part of the option name).
-            RunSc(
-                "create", ServiceName,
-                "binPath=", InstalledExePath,
-                "start=", "auto",
-                "obj=", ServiceAccount,
-                "DisplayName=", ServiceDisplayName);
-            RunSc("description", ServiceName, ServiceDescription);
+        Console.WriteLine($"Registering Windows Service: {ServiceName}");
+        RunSc(
+            "create", ServiceName,
+            "binPath=", InstalledExePath,
+            "start=", "auto",
+            "obj=", ServiceAccount,
+            "DisplayName=", ServiceDisplayName);
+        RunSc("description", ServiceName, ServiceDescription);
 
-            Console.WriteLine("Configuring service auto-restart on failure...");
-            // reset failure count after 60s healthy; restart 5s after each of first 3 failures.
-            RunSc(
-                "failure", ServiceName,
-                "reset=", "60",
-                "actions=", "restart/5000/restart/5000/restart/5000");
+        Console.WriteLine("Configuring service auto-restart on failure...");
+        RunSc(
+            "failure", ServiceName,
+            "reset=", "60",
+            "actions=", "restart/5000/restart/5000/restart/5000");
 
-            EnsureEventLogSource();
-        }
+        EnsureEventLogSource();
 
-        Console.WriteLine($"Granting service account access to install dir...");
+        Console.WriteLine("Granting service account access to install dir...");
         GrantInstallDirAccess();
 
         Console.WriteLine("Configuring Windows Firewall rules...");
         ConfigureFirewall(config.HttpPort, config.HttpsPort);
 
         Console.WriteLine("Starting service...");
-        RunSc("start", ServiceName);
+        var (startExit, _, startErr) = Run("sc.exe", new[] { "start", ServiceName });
+        if (startExit != 0)
+        {
+            Console.Error.WriteLine($"Service failed to start (sc start exit {startExit}).");
+            if (!string.IsNullOrWhiteSpace(startErr)) Console.Error.WriteLine(startErr);
+            Console.Error.WriteLine("Check Windows Event Viewer (Application log, source 'MathMcp')");
+            Console.Error.WriteLine($"or {Path.Combine(LogDir, "mathmcp-*.log")} for details.");
+            return 1;
+        }
+
+        // Verify it actually entered RUNNING state.
+        if (!WaitForServiceState("RUNNING", timeoutSeconds: 30))
+        {
+            Console.Error.WriteLine("Service did not reach RUNNING state within 30 seconds.");
+            Console.Error.WriteLine("Check Event Viewer (Application log) and the file logs for the cause.");
+            return 1;
+        }
 
         Console.WriteLine();
-        Console.WriteLine($"Math MCP Server installed.");
-        Console.WriteLine($"  HTTP:  http://localhost:{config.HttpPort}/");
-        Console.WriteLine($"  HTTPS: https://localhost:{config.HttpsPort}/");
-        Console.WriteLine($"Service \"{ServiceName}\" is running.");
+        Console.WriteLine($"Math MCP Server installed and running.");
+        Console.WriteLine($"  Info:  http://localhost:{config.HttpPort}/");
+        Console.WriteLine($"  MCP:   http://localhost:{config.HttpPort}/mcp");
+        Console.WriteLine($"  HTTPS: https://localhost:{config.HttpsPort}/mcp");
         return 0;
+    }
+
+    /// <summary>
+    /// Stops and removes any existing MathMcp service. Returns true on success or
+    /// when no service exists; returns false if the service is stuck and the user
+    /// needs manual intervention (e.g., close services.msc, then reboot).
+    /// </summary>
+    private static bool StopAndRemoveExistingService()
+    {
+        if (!ServiceExists())
+        {
+            return true;
+        }
+
+        Console.WriteLine("Stopping existing service...");
+        RunSc("stop", ServiceName);
+        if (!WaitForServiceState("STOPPED", timeoutSeconds: 20))
+        {
+            Console.WriteLine("Service did not stop cleanly — force-killing process(es)...");
+            ForceKillServiceProcesses();
+            // Give SCM a moment to notice the process is gone.
+            Thread.Sleep(2000);
+        }
+
+        Console.WriteLine("Removing service registration...");
+        RunSc("delete", ServiceName);
+
+        // sc delete just marks for deletion; finalization waits for all handles to
+        // close. If services.msc is open elsewhere, it will block this.
+        if (!WaitForServiceGone(timeoutSeconds: 30))
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Service is still 'marked for deletion' after 30 seconds.");
+            Console.Error.WriteLine("This usually means another process holds an open handle.");
+            Console.Error.WriteLine("Try this:");
+            Console.Error.WriteLine("  1. Close services.msc / Task Manager / Performance Monitor");
+            Console.Error.WriteLine("  2. Re-run this installer");
+            Console.Error.WriteLine("  3. If still stuck, reboot and re-run");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void ForceKillServiceProcesses()
+    {
+        // Find any running MathMcp.exe and kill it. Match by image name; the
+        // installed copy and any foreground "run" copy will both have this name.
+        try
+        {
+            foreach (var p in Process.GetProcessesByName("MathMcp"))
+            {
+                // Skip ourselves.
+                if (p.Id == Environment.ProcessId) continue;
+                try
+                {
+                    Console.WriteLine($"  Killing PID {p.Id}");
+                    p.Kill(entireProcessTree: true);
+                    p.WaitForExit(5000);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"  Could not kill PID {p.Id}: {ex.Message}");
+                }
+                finally
+                {
+                    p.Dispose();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Process enumeration failed: {ex.Message}");
+        }
+    }
+
+    private static void StripMarkOfTheWeb(string filePath)
+    {
+        // Windows tags files copied from network/Internet zones with a
+        // Zone.Identifier alternate data stream. Removing it prevents the OS from
+        // showing security prompts on the installed binary.
+        try
+        {
+            var adsPath = filePath + ":Zone.Identifier";
+            if (File.Exists(adsPath))
+            {
+                File.Delete(adsPath);
+                Console.WriteLine("Removed Mark-of-the-Web from installed binary.");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal.
+            Console.Error.WriteLine($"Could not strip Mark-of-the-Web (continuing): {ex.Message}");
+        }
     }
 
     private static string BuildInstallArgs(int? httpPort, int? httpsPort)
@@ -185,18 +301,9 @@ public static class Installer
         Console.WriteLine("Math MCP Server uninstaller");
         Console.WriteLine("---------------------------");
 
-        if (ServiceExists())
+        if (!StopAndRemoveExistingService())
         {
-            Console.WriteLine("Stopping service...");
-            RunSc("stop", ServiceName);
-            WaitForServiceStopped();
-
-            Console.WriteLine("Deleting service registration...");
-            RunSc("delete", ServiceName);
-        }
-        else
-        {
-            Console.WriteLine("Service not registered.");
+            return 1;
         }
 
         Console.WriteLine("Removing Windows Firewall rules...");
@@ -316,16 +423,36 @@ public static class Installer
         });
     }
 
-    private static void WaitForServiceStopped(int timeoutSeconds = 30)
+    /// <summary>Wait until <c>sc query</c> output contains the named state (e.g. "RUNNING", "STOPPED"), or timeout.</summary>
+    private static bool WaitForServiceState(string state, int timeoutSeconds = 30)
     {
         var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
         while (DateTime.UtcNow < deadline)
         {
             var (exit, stdout, _) = Run("sc.exe", new[] { "query", ServiceName });
-            if (exit != 0) return; // doesn't exist
-            if (stdout.Contains("STOPPED", StringComparison.OrdinalIgnoreCase)) return;
+            if (exit != 0) return false; // service doesn't exist
+            if (stdout.Contains(state, StringComparison.OrdinalIgnoreCase)) return true;
             Thread.Sleep(500);
         }
+        return false;
+    }
+
+    /// <summary>Wait until the service no longer exists (sc query returns failure), or timeout.</summary>
+    private static bool WaitForServiceGone(int timeoutSeconds = 30)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        var warned = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!ServiceExists()) return true;
+            if (!warned && DateTime.UtcNow > deadline.AddSeconds(-timeoutSeconds + 5))
+            {
+                Console.WriteLine("  (still pending — service is likely 'marked for deletion'; waiting...)");
+                warned = true;
+            }
+            Thread.Sleep(500);
+        }
+        return false;
     }
 
     private static void RunSc(params string[] args)
