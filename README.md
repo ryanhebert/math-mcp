@@ -85,11 +85,22 @@ This stops the service, removes the service registration, and deletes the instal
 
 ## Other commands
 
-| Command                | Effect                                              |
-|------------------------|-----------------------------------------------------|
-| `MathMcp.exe`          | Install (silent; requires admin)                    |
-| `MathMcp.exe uninstall`| Uninstall                                           |
-| `MathMcp.exe run`      | Run in foreground (debugging — bypasses service)    |
+| Command                                            | Effect                                              |
+|----------------------------------------------------|-----------------------------------------------------|
+| `MathMcp.exe`                                      | Install (silent; requires admin)                    |
+| `MathMcp.exe --http-port N --https-port N`         | Install with custom ports (writes to `config.json`) |
+| `MathMcp.exe uninstall`                            | Uninstall                                           |
+| `MathMcp.exe run`                                  | Run in foreground (debugging — bypasses service)    |
+| `MathMcp.exe --version`                            | Print version and exit                              |
+| `MathMcp.exe --help`                               | Show usage                                          |
+
+## Service details
+
+- Runs as virtual service account `NT SERVICE\MathMcp` (least-privilege; not LocalSystem)
+- Auto-starts on boot
+- Auto-restarts on crash (3 retries, 5 seconds apart, failure count resets after 60s healthy)
+- Event Log source: `MathMcp` (Application log)
+- Rolling daily file logs at `C:\Program Files\MathMcp\logs\` with 30-day retention
 
 ## Building from source
 

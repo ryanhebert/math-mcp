@@ -1,6 +1,8 @@
 using System.Net;
 using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging;
+using Serilog;
+using Serilog.Events;
 
 namespace MathMcp;
 
@@ -28,51 +30,70 @@ public static class ServiceHost
         var config = Config.Load(configPath);
         var cert = CertificateProvider.Load(certPath);
 
-        var builder = WebApplication.CreateBuilder();
-
-        if (asWindowsService)
-        {
-            builder.Services.AddWindowsService(o => o.ServiceName = Installer.ServiceName);
-            builder.Logging.AddEventLog(o => o.SourceName = Installer.ServiceName);
-        }
-
         Directory.CreateDirectory(Installer.LogDir);
-        var logFile = Path.Combine(
-            Installer.LogDir,
-            $"mathmcp-{DateTime.UtcNow:yyyyMMdd}.log");
 
-        builder.Logging.SetMinimumLevel(ParseLogLevel(config.LogLevel));
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Is(ParseSerilogLevel(config.LogLevel))
+            .Enrich.FromLogContext()
+            .WriteTo.File(
+                path: Path.Combine(Installer.LogDir, "mathmcp-.log"),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 30,
+                outputTemplate:
+                    "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext} {Message:lj}{NewLine}{Exception}",
+                shared: true)
+            .CreateLogger();
 
-        builder.Services.AddMcpServer().WithToolsFromAssembly();
-
-        builder.WebHost.ConfigureKestrel(options =>
+        try
         {
-            options.Listen(IPAddress.Any, config.HttpPort);
-            options.Listen(IPAddress.Any, config.HttpsPort, listen =>
-                listen.UseHttps(cert));
-        });
+            var builder = WebApplication.CreateBuilder();
+            builder.Host.UseSerilog();
 
-        var app = builder.Build();
+            if (asWindowsService)
+            {
+                builder.Services.AddWindowsService(o => o.ServiceName = Installer.ServiceName);
+            }
 
-        var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger("MathMcp");
-        startupLogger.LogInformation(
-            "Math MCP Server starting. HTTP port {Http}, HTTPS port {Https}",
-            config.HttpPort, config.HttpsPort);
+            builder.Services.AddMcpServer().WithToolsFromAssembly();
 
-        app.MapMcp();
-        app.Run();
-        return 0;
+            builder.WebHost.ConfigureKestrel(options =>
+            {
+                options.Listen(IPAddress.Any, config.HttpPort);
+                options.Listen(IPAddress.Any, config.HttpsPort, listen =>
+                    listen.UseHttps(cert));
+            });
+
+            var app = builder.Build();
+
+            var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("MathMcp");
+            startupLogger.LogInformation(
+                "Math MCP Server starting. HTTP port {Http}, HTTPS port {Https}",
+                config.HttpPort, config.HttpsPort);
+
+            app.MapMcp();
+            app.Run();
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "Service terminated unexpectedly");
+            return 1;
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
     }
 
-    private static LogLevel ParseLogLevel(string s) => s.ToLowerInvariant() switch
+    private static LogEventLevel ParseSerilogLevel(string s) => s.ToLowerInvariant() switch
     {
-        "trace" => LogLevel.Trace,
-        "debug" => LogLevel.Debug,
-        "information" or "info" => LogLevel.Information,
-        "warning" or "warn" => LogLevel.Warning,
-        "error" => LogLevel.Error,
-        "critical" => LogLevel.Critical,
-        _ => LogLevel.Information,
+        "trace" => LogEventLevel.Verbose,
+        "debug" => LogEventLevel.Debug,
+        "information" or "info" => LogEventLevel.Information,
+        "warning" or "warn" => LogEventLevel.Warning,
+        "error" => LogEventLevel.Error,
+        "critical" => LogEventLevel.Fatal,
+        _ => LogEventLevel.Information,
     };
 }

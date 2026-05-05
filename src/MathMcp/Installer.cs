@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
@@ -12,6 +13,7 @@ public static class Installer
     public const string ServiceDisplayName = "Math MCP Server";
     public const string ServiceDescription =
         "Math MCP server providing add/subtract/multiply/divide tools.";
+    public const string ServiceAccount = @"NT SERVICE\MathMcp";
 
     public static string InstallDir =>
         Path.Combine(
@@ -24,11 +26,11 @@ public static class Installer
     public static string CertPath => Path.Combine(CertDir, "cert.pfx");
     public static string LogDir => Path.Combine(InstallDir, "logs");
 
-    public static int Install()
+    public static int Install(int? httpPort = null, int? httpsPort = null)
     {
         if (!IsAdmin())
         {
-            return Relaunch(arguments: "");
+            return Relaunch(BuildInstallArgs(httpPort, httpsPort));
         }
 
         var sourceExe = Process.GetCurrentProcess().MainModule?.FileName
@@ -55,10 +57,27 @@ public static class Installer
             File.Copy(sourceExe, InstalledExePath, overwrite: true);
         }
 
-        if (!File.Exists(ConfigPath))
+        // Load existing config or create a new one with defaults.
+        var config = File.Exists(ConfigPath) ? Config.Load(ConfigPath) : new Config();
+        var configChanged = !File.Exists(ConfigPath);
+
+        if (httpPort is int hp && hp != config.HttpPort)
+        {
+            Console.WriteLine($"Setting HTTP port to {hp}");
+            config.HttpPort = hp;
+            configChanged = true;
+        }
+        if (httpsPort is int hsp && hsp != config.HttpsPort)
+        {
+            Console.WriteLine($"Setting HTTPS port to {hsp}");
+            config.HttpsPort = hsp;
+            configChanged = true;
+        }
+
+        if (configChanged)
         {
             Console.WriteLine($"Writing config: {ConfigPath}");
-            new Config().Save(ConfigPath);
+            config.Save(ConfigPath);
         }
         else
         {
@@ -83,11 +102,22 @@ public static class Installer
                 "create", ServiceName,
                 "binPath=", InstalledExePath,
                 "start=", "auto",
+                "obj=", ServiceAccount,
                 "DisplayName=", ServiceDisplayName);
             RunSc("description", ServiceName, ServiceDescription);
+
+            Console.WriteLine("Configuring service auto-restart on failure...");
+            // reset failure count after 60s healthy; restart 5s after each of first 3 failures.
+            RunSc(
+                "failure", ServiceName,
+                "reset=", "60",
+                "actions=", "restart/5000/restart/5000/restart/5000");
+
+            EnsureEventLogSource();
         }
 
-        var config = Config.Load(ConfigPath);
+        Console.WriteLine($"Granting service account access to install dir...");
+        GrantInstallDirAccess();
 
         Console.WriteLine("Configuring Windows Firewall rules...");
         ConfigureFirewall(config.HttpPort, config.HttpsPort);
@@ -101,6 +131,48 @@ public static class Installer
         Console.WriteLine($"  HTTPS: https://localhost:{config.HttpsPort}/");
         Console.WriteLine($"Service \"{ServiceName}\" is running.");
         return 0;
+    }
+
+    private static string BuildInstallArgs(int? httpPort, int? httpsPort)
+    {
+        var parts = new List<string>();
+        if (httpPort is int hp) { parts.Add("--http-port"); parts.Add(hp.ToString()); }
+        if (httpsPort is int hsp) { parts.Add("--https-port"); parts.Add(hsp.ToString()); }
+        return string.Join(' ', parts);
+    }
+
+    [SuppressMessage("Interoperability", "CA1416", Justification = "Windows-only path; file is gated by SupportedOSPlatform.")]
+    private static void EnsureEventLogSource()
+    {
+        try
+        {
+            if (!EventLog.SourceExists(ServiceName))
+            {
+                EventLog.CreateEventSource(ServiceName, "Application");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Could not create Event Log source '{ServiceName}': {ex.Message}");
+        }
+    }
+
+    private static void GrantInstallDirAccess()
+    {
+        // Read & execute on install dir (so service can read config + cert).
+        Run("icacls.exe", new[]
+        {
+            InstallDir,
+            "/grant", $"{ServiceAccount}:(OI)(CI)RX",
+            "/T", "/C", "/Q",
+        });
+        // Modify on logs dir (so service can write/rotate log files).
+        Run("icacls.exe", new[]
+        {
+            LogDir,
+            "/grant", $"{ServiceAccount}:(OI)(CI)M",
+            "/T", "/C", "/Q",
+        });
     }
 
     public static int Uninstall()
