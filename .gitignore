@@ -5,6 +5,10 @@ publish/
 *.suo
 .vs/
 .claude/
+.mcp.json
 config.json
 certs/
 logs/
+
+# Built artifacts: distributed via GitHub Releases, not git.
+/MathMcp.exe

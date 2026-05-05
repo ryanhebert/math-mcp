@@ -12,7 +12,7 @@ Distributed as a single self-contained `MathMcp.exe`. No .NET runtime install re
 
 ## Install
 
-1. Download `MathMcp.exe` to anywhere on the machine (e.g. `Downloads\`).
+1. Download `MathMcp.exe` from the latest release: <https://github.com/ryanhebert/math-mcp/releases/latest/download/MathMcp.exe>
 2. Double-click it. The .exe has the `requireAdministrator` manifest, so Windows shows the UAC prompt automatically. Accept it.
 
 That's it. The installer:
