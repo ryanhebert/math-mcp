@@ -28,10 +28,11 @@ The service binds to `0.0.0.0`, so it's reachable from the network.
 
 ## Endpoints
 
-| URL                                  | Notes                                              |
-|--------------------------------------|----------------------------------------------------|
-| `http://<host>:52080/`               | Plain HTTP                                         |
-| `https://<host>:52443/`              | HTTPS, self-signed cert (SAN = `localhost`)        |
+| Endpoint                                  | Method | Purpose                                       |
+|-------------------------------------------|--------|-----------------------------------------------|
+| `http://<host>:52080/`  /  `https://<host>:52443/`  | GET    | Service info JSON (version, ports, tools, uptime) |
+| `http://<host>:52080/health`              | GET    | Health probe (`{"status":"ok",...}`)          |
+| `http://<host>:52080/mcp`  /  `https://<host>:52443/mcp` | POST/SSE | MCP Streamable HTTP transport |
 
 Remote clients connecting by IP or hostname will see a TLS hostname-mismatch warning (the cert is only valid for `localhost`). Either skip TLS verification in your MCP client or use the plain-HTTP listener.
 
@@ -40,7 +41,7 @@ Example Claude Desktop / Claude Code config:
 ```json
 {
   "mcpServers": {
-    "math": { "url": "http://<host>:52080/" }
+    "math": { "url": "http://<host>:52080/mcp" }
   }
 }
 ```
