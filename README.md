@@ -20,6 +20,7 @@ That's it. The installer:
 - Copies itself to `C:\Program Files\MathMcp\`
 - Generates a self-signed cert (CN/SAN = `localhost`, 1-year validity) at `certs\cert.pfx`
 - Writes default `config.json`
+- Adds Windows Firewall inbound TCP rules for ports 52080 and 52443
 - Registers and starts the `MathMcp` Windows Service (auto-start on boot)
 - Prints the endpoint URLs
 

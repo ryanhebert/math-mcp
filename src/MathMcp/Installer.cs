@@ -87,14 +87,18 @@ public static class Installer
             RunSc("description", ServiceName, ServiceDescription);
         }
 
+        var config = Config.Load(ConfigPath);
+
+        Console.WriteLine("Configuring Windows Firewall rules...");
+        ConfigureFirewall(config.HttpPort, config.HttpsPort);
+
         Console.WriteLine("Starting service...");
         RunSc("start", ServiceName);
 
-        var config = Config.Load(ConfigPath);
         Console.WriteLine();
         Console.WriteLine($"Math MCP Server installed.");
-        Console.WriteLine($"  HTTP:  http://localhost:{config.HttpPort}/mcp");
-        Console.WriteLine($"  HTTPS: https://localhost:{config.HttpsPort}/mcp");
+        Console.WriteLine($"  HTTP:  http://localhost:{config.HttpPort}/");
+        Console.WriteLine($"  HTTPS: https://localhost:{config.HttpsPort}/");
         Console.WriteLine($"Service \"{ServiceName}\" is running.");
         return 0;
     }
@@ -122,6 +126,9 @@ public static class Installer
         {
             Console.WriteLine("Service not registered.");
         }
+
+        Console.WriteLine("Removing Windows Firewall rules...");
+        RemoveFirewall();
 
         if (Directory.Exists(InstallDir))
         {
@@ -186,6 +193,55 @@ public static class Installer
     {
         var (exit, _, _) = Run("sc.exe", new[] { "query", ServiceName });
         return exit == 0;
+    }
+
+    private const string FwRuleHttp = "MathMcp HTTP";
+    private const string FwRuleHttps = "MathMcp HTTPS";
+
+    private static void ConfigureFirewall(int httpPort, int httpsPort)
+    {
+        // Idempotent: delete any existing rules with our names, then add fresh ones.
+        DeleteFirewallRule(FwRuleHttp);
+        DeleteFirewallRule(FwRuleHttps);
+
+        AddFirewallRule(FwRuleHttp, httpPort);
+        AddFirewallRule(FwRuleHttps, httpsPort);
+    }
+
+    private static void RemoveFirewall()
+    {
+        DeleteFirewallRule(FwRuleHttp);
+        DeleteFirewallRule(FwRuleHttps);
+    }
+
+    private static void AddFirewallRule(string name, int port)
+    {
+        var (exit, stdout, stderr) = Run("netsh.exe", new[]
+        {
+            "advfirewall", "firewall", "add", "rule",
+            $"name={name}",
+            "dir=in",
+            "action=allow",
+            "protocol=TCP",
+            $"localport={port}",
+            "profile=any",
+        });
+        if (exit != 0)
+        {
+            Console.Error.WriteLine($"Failed to add firewall rule '{name}' (port {port}): exit {exit}");
+            if (!string.IsNullOrWhiteSpace(stdout)) Console.Error.WriteLine(stdout);
+            if (!string.IsNullOrWhiteSpace(stderr)) Console.Error.WriteLine(stderr);
+        }
+    }
+
+    private static void DeleteFirewallRule(string name)
+    {
+        // netsh returns non-zero when the rule doesn't exist; that's fine, ignore.
+        Run("netsh.exe", new[]
+        {
+            "advfirewall", "firewall", "delete", "rule",
+            $"name={name}",
+        });
     }
 
     private static void WaitForServiceStopped(int timeoutSeconds = 30)
