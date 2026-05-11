@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Math MCP Server — Logs (mockup)</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg-card: #131a30;
+    --bg-card-2: #1a2240;
+    --fg: #e6ecff;
+    --fg-muted: #8a93b3;
+    --accent: #7c5cff;
+    --accent-2: #4ad6ff;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --border: rgba(255,255,255,0.08);
+    --code-bg: #0f1428;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: var(--fg);
+    background:
+      radial-gradient(60vh 60vh at 15% 0%, rgba(124,92,255,0.18), transparent 70%),
+      radial-gradient(60vh 60vh at 95% 10%, rgba(74,214,255,0.12), transparent 70%),
+      var(--bg);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px 48px; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+  .logo {
+    width: 40px; height: 40px; flex: 0 0 40px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 18px; color: #0b1020;
+  }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+  .subtitle { color: var(--fg-muted); font-size: 13px; margin-top: 2px; }
+  .crumbs { color: var(--fg-muted); font-size: 12px; margin-bottom: 8px; }
+  .crumbs a { color: var(--accent-2); text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    background: rgba(74,214,255,0.10);
+    color: var(--accent-2);
+    font-size: 12px; font-weight: 600;
+    border: 1px solid rgba(74,214,255,0.3);
+  }
+  .pill.paused {
+    background: rgba(251,191,36,0.10);
+    color: var(--warn);
+    border-color: rgba(251,191,36,0.3);
+  }
+  .pill .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent-2);
+    box-shadow: 0 0 0 0 rgba(74,214,255,0.6);
+    animation: pulse 2s infinite;
+  }
+  .pill.paused .dot { background: var(--warn); animation: none; }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(74,214,255,0.55); }
+    70%  { box-shadow: 0 0 0 10px rgba(74,214,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(74,214,255,0); }
+  }
+
+  .toolbar {
+    display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .meta { display: flex; align-items: center; gap: 16px; flex: 1; flex-wrap: wrap; }
+  .meta-item { font-size: 12.5px; color: var(--fg-muted); }
+  .meta-item strong { color: var(--fg); font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .toolbar-actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-family: inherit; font-size: 12.5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .btn:hover { border-color: var(--accent-2); color: var(--accent-2); }
+  .btn.active { border-color: var(--accent); color: var(--accent); background: rgba(124,92,255,0.08); }
+
+  .filter-chips { display: flex; gap: 6px; }
+  .chip {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--fg-muted);
+    transition: all 0.15s ease;
+    user-select: none;
+  }
+  .chip:hover { color: var(--fg); }
+  .chip.on { color: var(--fg); border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.04); }
+  .chip[data-level="ERR"].on { color: var(--err); border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.08); }
+  .chip[data-level="WRN"].on { color: var(--warn); border-color: rgba(251,191,36,0.4); background: rgba(251,191,36,0.08); }
+  .chip[data-level="INF"].on { color: var(--accent-2); border-color: rgba(74,214,255,0.4); background: rgba(74,214,255,0.08); }
+  .chip[data-level="DBG"].on { color: var(--fg-muted); border-color: rgba(255,255,255,0.18); background: rgba(255,255,255,0.04); }
+
+  .log {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+  }
+  .line {
+    display: grid;
+    grid-template-columns: max-content 44px max-content 1fr;
+    gap: 12px;
+    padding: 1px 16px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .line:hover { background: rgba(255,255,255,0.025); }
+  .line .ts { color: var(--fg-muted); }
+  .line .lvl { font-weight: 700; }
+  .line.INF .lvl { color: var(--accent-2); }
+  .line.DBG .lvl { color: var(--fg-muted); }
+  .line.WRN .lvl { color: var(--warn); }
+  .line.ERR .lvl { color: var(--err); }
+  .line.FTL .lvl { color: var(--err); }
+  .line .src { color: var(--accent); }
+  .line .msg { color: var(--fg); }
+  .line.WRN { background: rgba(251,191,36,0.04); }
+  .line.ERR { background: rgba(248,113,113,0.06); }
+  .line.FTL { background: rgba(248,113,113,0.10); }
+  .line .exc { color: var(--err); grid-column: 4; opacity: 0.85; }
+
+  .footer-info {
+    text-align: center; color: var(--fg-muted); font-size: 12px;
+    margin-top: 14px;
+  }
+  .footer-info a { color: var(--accent-2); text-decoration: none; }
+  .footer-info a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="crumbs"><a href="/">← Math MCP Server</a></div>
+    <header>
+      <div class="logo">≡</div>
+      <div style="flex:1">
+        <h1>Logs</h1>
+        <div class="subtitle">Today, tail of last 500 lines</div>
+      </div>
+      <div class="pill" id="status"><span class="dot"></span> Live</div>
+    </header>
+
+    <div class="toolbar">
+      <div class="meta">
+        <span class="meta-item">File <strong>mathmcp-20260511.log</strong></span>
+        <span class="meta-item">Size <strong>184 KB</strong></span>
+        <span class="meta-item">Lines shown <strong>500</strong></span>
+        <span class="meta-item">Last refresh <strong id="last-refresh">just now</strong></span>
+      </div>
+      <div class="toolbar-actions">
+        <div class="filter-chips" id="filters">
+          <span class="chip on" data-level="INF">INF</span>
+          <span class="chip on" data-level="DBG">DBG</span>
+          <span class="chip on" data-level="WRN">WRN</span>
+          <span class="chip on" data-level="ERR">ERR</span>
+        </div>
+        <button class="btn" id="pause-btn">Pause</button>
+        <button class="btn" id="bottom-btn">↓ Bottom</button>
+      </div>
+    </div>
+
+    <div class="log" id="log">
+      <div class="line INF"><span class="ts">2026-05-11 08:31:00.412</span><span class="lvl">INF</span><span class="src">MathMcp</span><span class="msg">Math MCP Server starting. HTTP port 52080, HTTPS port 52443</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 08:31:00.498</span><span class="lvl">INF</span><span class="src">Microsoft.Hosting.Lifetime</span><span class="msg">Now listening on: http://0.0.0.0:52080</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 08:31:00.501</span><span class="lvl">INF</span><span class="src">Microsoft.Hosting.Lifetime</span><span class="msg">Now listening on: https://0.0.0.0:52443</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 08:31:00.503</span><span class="lvl">INF</span><span class="src">Microsoft.Hosting.Lifetime</span><span class="msg">Application started. Hosting environment: Production</span></div>
+      <div class="line DBG"><span class="ts">2026-05-11 08:32:14.001</span><span class="lvl">DBG</span><span class="src">MathMcp.AuthMiddleware</span><span class="msg">Token check on /mcp → allow (static bearer)</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 08:32:14.013</span><span class="lvl">INF</span><span class="src">ModelContextProtocol</span><span class="msg">tools/list — 4 tools returned</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 08:34:22.117</span><span class="lvl">INF</span><span class="src">ModelContextProtocol</span><span class="msg">tools/call add(2,3) → 5</span></div>
+      <div class="line WRN"><span class="ts">2026-05-11 08:41:03.502</span><span class="lvl">WRN</span><span class="src">MathMcp.AuthMiddleware</span><span class="msg">Token check on /mcp → 401 (bearer not recognized)</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 08:41:09.220</span><span class="lvl">INF</span><span class="src">MathMcp.TokenEndpoint</span><span class="msg">/token issued access_token expires_in=3600 client_id=mm_cid_7kP2vR9wY4tH6jM1</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 08:41:09.331</span><span class="lvl">INF</span><span class="src">ModelContextProtocol</span><span class="msg">tools/call divide(10,2) → 5</span></div>
+      <div class="line ERR"><span class="ts">2026-05-11 09:02:58.881</span><span class="lvl">ERR</span><span class="src">MathTools</span><span class="msg">tools/call divide(5,0) failed: System.DivideByZeroException: Attempted to divide by zero.</span></div>
+      <div class="line ERR"><span class="ts">2026-05-11 09:02:58.881</span><span class="lvl">ERR</span><span class="src">MathTools</span><span class="exc">   at MathMcp.MathTools.Divide(Double a, Double b) in C:\src\MathMcp\src\MathMcp\MathTools.cs:line 34
+   at ModelContextProtocol.Server.ToolInvoker.InvokeAsync(...)</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 09:15:44.002</span><span class="lvl">INF</span><span class="src">ModelContextProtocol</span><span class="msg">tools/call multiply(7,8) → 56</span></div>
+      <div class="line DBG"><span class="ts">2026-05-11 09:30:00.001</span><span class="lvl">DBG</span><span class="src">MathMcp.TokenStore</span><span class="msg">Swept 3 expired tokens (cache size now 1)</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 10:45:11.554</span><span class="lvl">INF</span><span class="src">MathMcp.AuthMiddleware</span><span class="msg">Token check on /mcp → allow (issued bearer, expires in 2841s)</span></div>
+      <div class="line INF"><span class="ts">2026-05-11 10:45:11.601</span><span class="lvl">INF</span><span class="src">ModelContextProtocol</span><span class="msg">tools/call subtract(100,42) → 58</span></div>
+    </div>
+
+    <div class="footer-info">
+      Path: <code>C:\Program Files\MathMcp\logs\mathmcp-20260511.log</code>
+      &middot; <a href="/info">JSON</a>
+      &middot; <a href="/health">Health</a>
+      &middot; <a href="/">Home</a>
+    </div>
+  </div>
+
+<script>
+  // --- Filter chips ---
+  const filters = document.getElementById('filters');
+  const enabled = { INF: true, DBG: true, WRN: true, ERR: true, FTL: true };
+  filters.addEventListener('click', e => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const lvl = chip.dataset.level;
+    enabled[lvl] = !enabled[lvl];
+    chip.classList.toggle('on', enabled[lvl]);
+    document.querySelectorAll('.line').forEach(l => {
+      const lvlCls = [...l.classList].find(c => /^(INF|DBG|WRN|ERR|FTL)$/.test(c));
+      l.style.display = enabled[lvlCls] ? '' : 'none';
+    });
+  });
+
+  // --- Pause / live toggle ---
+  const pauseBtn = document.getElementById('pause-btn');
+  const status   = document.getElementById('status');
+  const lastRef  = document.getElementById('last-refresh');
+  let paused = false;
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+    pauseBtn.classList.toggle('active', paused);
+    status.classList.toggle('paused', paused);
+    status.firstChild.nextSibling.nodeValue = paused ? ' Paused' : ' Live';
+  });
+
+  // --- Jump to bottom ---
+  const log = document.getElementById('log');
+  document.getElementById('bottom-btn').addEventListener('click', () => {
+    log.scrollTop = log.scrollHeight;
+  });
+  log.scrollTop = log.scrollHeight;
+
+  // --- Last-refresh ticker (mockup just counts up) ---
+  let secs = 0;
+  setInterval(() => {
+    if (paused) return;
+    secs = (secs + 3) % 60;
+    lastRef.textContent = secs === 0 ? 'just now' : `${secs}s ago`;
+  }, 3000);
+</script>
+</body>
+</html>
