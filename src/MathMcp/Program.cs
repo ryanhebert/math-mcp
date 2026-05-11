@@ -40,9 +40,11 @@ return verb switch
 {
     "uninstall" => Installer.Uninstall(),
     "run" => ServiceHost.Run(asWindowsService: false),
+    "rotate-creds" => Installer.RotateCreds(),
     "" => Installer.Install(
         httpPort: TryGetIntFlag(argList, "--http-port"),
-        httpsPort: TryGetIntFlag(argList, "--https-port")),
+        httpsPort: TryGetIntFlag(argList, "--https-port"),
+        authMode: ParseAuthFlag(argList)),
     _ => UsageAndExit(),
 };
 
@@ -57,11 +59,31 @@ static void PrintUsage()
     Console.WriteLine("MathMcp — Math MCP Server for Windows");
     Console.WriteLine();
     Console.WriteLine("Usage:");
-    Console.WriteLine("  MathMcp.exe [--http-port N] [--https-port N]   Install (silent, requires admin)");
-    Console.WriteLine("  MathMcp.exe uninstall                          Uninstall (requires admin)");
-    Console.WriteLine("  MathMcp.exe run                                Run in foreground (debugging)");
-    Console.WriteLine("  MathMcp.exe --version                          Print version and exit");
-    Console.WriteLine("  MathMcp.exe --help                             Show this help");
+    Console.WriteLine("  MathMcp.exe [--auth] [--http-port N] [--https-port N]");
+    Console.WriteLine("                                                Install (silent, requires admin)");
+    Console.WriteLine("  MathMcp.exe --auth off                        Reinstall with auth disabled");
+    Console.WriteLine("  MathMcp.exe rotate-creds                      Regenerate auth credentials (admin)");
+    Console.WriteLine("  MathMcp.exe uninstall                         Uninstall (requires admin)");
+    Console.WriteLine("  MathMcp.exe run                               Run in foreground (debugging)");
+    Console.WriteLine("  MathMcp.exe --version                         Print version and exit");
+    Console.WriteLine("  MathMcp.exe --help                            Show this help");
+    Console.WriteLine();
+    Console.WriteLine("Auth modes:");
+    Console.WriteLine("  --auth        Enable auth (static bearer + OAuth2 client_credentials).");
+    Console.WriteLine("                Credentials are auto-generated, printed once, and");
+    Console.WriteLine("                also viewable at http://localhost:PORT/.");
+    Console.WriteLine("  --auth off    Explicitly disable auth on a reinstall.");
+}
+
+static AuthMode ParseAuthFlag(List<string> args)
+{
+    var idx = args.IndexOf("--auth");
+    if (idx < 0) return AuthMode.NotSpecified;
+    if (idx + 1 < args.Count && args[idx + 1].Equals("off", StringComparison.OrdinalIgnoreCase))
+    {
+        return AuthMode.ForceDisabled;
+    }
+    return AuthMode.Enabled;
 }
 
 static int? TryGetIntFlag(List<string> args, string name)

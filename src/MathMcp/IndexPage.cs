@@ -1,8 +1,24 @@
+using System.Text;
+using System.Text.Json;
+
 namespace MathMcp;
 
 internal static class IndexPage
 {
-    public static string Render(IndexPageModel m) => $$"""
+    private static readonly JsonSerializerOptions CamelCase = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    public static string Render(IndexPageModel m)
+    {
+        var initialRequestsJson = JsonSerializer.Serialize(m.RecentRequests, CamelCase);
+        var authCard = m.AuthEnabled ? RenderAuthCard(m) : "";
+        var tokenEndpoint = m.AuthEnabled
+            ? "<span class=\"endpoint\"><span class=\"method\">POST</span>/token<span class=\"desc\">OAuth2 client_credentials → bearer token</span></span>"
+            : "";
+
+        return $$"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -19,6 +35,8 @@ internal static class IndexPage
     --accent: #7c5cff;
     --accent-2: #4ad6ff;
     --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
     --border: rgba(255,255,255,0.08);
     --code-bg: #0f1428;
   }
@@ -76,6 +94,26 @@ internal static class IndexPage
     text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--fg-muted); font-weight: 600;
   }
+  .card.auth-card {
+    border-color: rgba(251,191,36,0.35);
+    background:
+      linear-gradient(180deg, rgba(251,191,36,0.04) 0%, rgba(251,191,36,0.02) 100%),
+      linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);
+  }
+  .card.auth-card h2 { color: var(--warn); display: flex; align-items: center; gap: 8px; }
+  .card.auth-card h2::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--warn); box-shadow: 0 0 8px rgba(251,191,36,0.6);
+  }
+  .auth-banner {
+    font-size: 12px; color: var(--fg-muted);
+    margin: -4px 0 14px;
+    padding: 8px 10px;
+    background: rgba(251,191,36,0.06);
+    border: 1px solid rgba(251,191,36,0.18);
+    border-radius: 8px;
+  }
+  .auth-banner strong { color: var(--warn); font-weight: 600; }
   dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; }
   dt { color: var(--fg-muted); }
   dd { margin: 0; word-break: break-all; }
@@ -107,6 +145,74 @@ internal static class IndexPage
     padding: 6px 12px;
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 13px;
+  }
+  .cred-group { margin-bottom: 14px; }
+  .cred-group:last-child { margin-bottom: 0; }
+  .cred-group-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--fg-muted); font-weight: 600;
+    margin: 0 0 6px;
+  }
+  .cred {
+    display: grid; grid-template-columns: max-content 1fr auto;
+    align-items: center; gap: 10px;
+    padding: 8px 10px; margin: 4px 0;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+  }
+  .cred-label { color: var(--fg-muted); }
+  .cred-value { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copy-btn {
+    background: transparent;
+    color: var(--accent-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-family: inherit; font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .copy-btn:hover { border-color: var(--accent-2); background: rgba(74,214,255,0.08); }
+  .copy-btn.copied { color: var(--ok); border-color: var(--ok); background: rgba(52,211,153,0.1); }
+  table.reqs {
+    width: 100%; border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  table.reqs th {
+    text-align: left;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--fg-muted); font-weight: 600;
+    padding: 4px 10px; border-bottom: 1px solid var(--border);
+  }
+  table.reqs td {
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  table.reqs tr:last-child td { border-bottom: none; }
+  table.reqs tr:hover td { background: rgba(255,255,255,0.025); }
+  table.reqs .ts { color: var(--fg-muted); width: 1%; white-space: nowrap; }
+  table.reqs .args { color: var(--fg); }
+  table.reqs .dur { color: var(--fg-muted); width: 1%; white-space: nowrap; }
+  .status {
+    display: inline-block; min-width: 38px; text-align: center;
+    padding: 2px 8px; border-radius: 6px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11.5px; font-weight: 600;
+  }
+  .status.ok   { background: rgba(52,211,153,0.10); color: var(--ok);   border: 1px solid rgba(52,211,153,0.3); }
+  .status.warn { background: rgba(251,191,36,0.10); color: var(--warn); border: 1px solid rgba(251,191,36,0.3); }
+  .status.err  { background: rgba(248,113,113,0.10); color: var(--err); border: 1px solid rgba(248,113,113,0.3); }
+  .reqs-footer {
+    margin-top: 10px; font-size: 12px; color: var(--fg-muted); text-align: right;
+  }
+  .reqs-footer a { color: var(--accent-2); text-decoration: none; }
+  .reqs-footer a:hover { text-decoration: underline; }
+  .reqs-empty {
+    color: var(--fg-muted); font-size: 12.5px; text-align: center;
+    padding: 16px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   footer { color: var(--fg-muted); font-size: 12px; margin-top: 32px; text-align: center; }
   footer a { color: var(--accent-2); text-decoration: none; }
@@ -140,19 +246,51 @@ internal static class IndexPage
       <div class="card">
         <h2>Listening</h2>
         <dl>
-          <dt>HTTP port</dt>  <dd class="mono">{{m.HttpPort}}</dd>
-          <dt>HTTPS port</dt> <dd class="mono">{{m.HttpsPort}}</dd>
-          <dt>Bind</dt>       <dd class="mono">0.0.0.0 (all interfaces)</dd>
-          <dt>Cert SAN</dt>   <dd class="mono">localhost (self-signed)</dd>
+          <dt>HTTP port</dt>   <dd class="mono">{{m.HttpPort}}</dd>
+          <dt>HTTPS port</dt>  <dd class="mono">{{m.HttpsPort}}</dd>
+          <dt>Bind</dt>        <dd class="mono">0.0.0.0 (all interfaces)</dd>
+          <dt>Cert SAN</dt>    <dd class="mono">localhost (self-signed)</dd>
+          <dt>Cert valid</dt>  <dd class="mono">{{m.CertNotBefore}} → {{m.CertNotAfter}}</dd>
+          <dt>Fingerprint</dt> <dd class="mono" style="font-size:11.5px">
+            <span id="v-fp">SHA256:{{m.CertFingerprint}}</span>
+            <button class="copy-btn" data-copy="v-fp" style="margin-left:6px">Copy</button>
+          </dd>
+          <dt>Download</dt>    <dd>
+            <a href="/cert.cer" class="copy-btn" style="text-decoration:none">cert.cer (DER)</a>
+            <a href="/cert.pem" class="copy-btn" style="text-decoration:none; margin-left:4px">cert.pem</a>
+          </dd>
         </dl>
+      </div>
+
+      {{authCard}}
+
+      <div class="card" style="grid-column: 1 / -1">
+        <h2>Recent MCP requests</h2>
+        <table class="reqs">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Method</th>
+              <th>Args</th>
+              <th>Status</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody id="reqs-tbody"></tbody>
+        </table>
+        <div class="reqs-footer">
+          <span id="reqs-summary">—</span> &middot; <a href="/logs">View full log →</a>
+        </div>
       </div>
 
       <div class="card" style="grid-column: 1 / -1">
         <h2>Endpoints</h2>
         <a class="endpoint" href="/"><span class="method">GET</span>/<span class="desc">this page (HTML); JSON via <code>/info</code></span></a>
         <a class="endpoint" href="/info"><span class="method">GET</span>/info<span class="desc">service metadata (JSON)</span></a>
+        <a class="endpoint" href="/logs"><span class="method">GET</span>/logs<span class="desc">live log viewer (HTML)</span></a>
         <a class="endpoint" href="/health"><span class="method">GET</span>/health<span class="desc">health probe</span></a>
-        <span class="endpoint"><span class="method">POST</span>/mcp<span class="desc">MCP Streamable HTTP transport</span></span>
+        {{tokenEndpoint}}
+        <span class="endpoint"><span class="method">POST</span>/mcp<span class="desc">MCP Streamable HTTP transport{{(m.AuthEnabled ? " (auth required)" : "")}}</span></span>
       </div>
 
       <div class="card" style="grid-column: 1 / -1">
@@ -167,7 +305,7 @@ internal static class IndexPage
     </div>
 
     <footer>
-      Math MCP Server &middot; <a href="/info">JSON</a> &middot; <a href="/health">Health</a>
+      Math MCP Server &middot; <a href="/info">JSON</a> &middot; <a href="/logs">Logs</a> &middot; <a href="/health">Health</a>
     </footer>
   </div>
 
@@ -178,12 +316,12 @@ internal static class IndexPage
     function fmt(seconds) {
       const d = Math.floor(seconds / 86400);
       const h = Math.floor((seconds % 86400) / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
+      const mm = Math.floor((seconds % 3600) / 60);
       const s = Math.floor(seconds % 60);
       const parts = [];
       if (d) parts.push(d + 'd');
       if (h || d) parts.push(h + 'h');
-      if (m || h || d) parts.push(m + 'm');
+      if (mm || h || d) parts.push(mm + 'm');
       parts.push(s + 's');
       return parts.join(' ');
     }
@@ -194,10 +332,116 @@ internal static class IndexPage
     tick();
     setInterval(tick, 1000);
   })();
+
+  document.querySelectorAll('.copy-btn[data-copy]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.copy);
+      if (!target) return;
+      const text = target.innerText.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+      });
+    });
+  });
+
+  (function() {
+    const tbody = document.getElementById('reqs-tbody');
+    const summary = document.getElementById('reqs-summary');
+    const initial = {{initialRequestsJson}};
+    function statusClass(s) { return s >= 500 ? 'err' : s >= 400 ? 'warn' : 'ok'; }
+    function fmtTime(iso) {
+      const d = new Date(iso);
+      const pad = n => String(n).padStart(2, '0');
+      const ms = String(d.getMilliseconds()).padStart(3, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
+    }
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function render(items) {
+      if (!items || !items.length) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="reqs-empty">No MCP requests yet.</div></td></tr>';
+        summary.textContent = '—';
+        return;
+      }
+      tbody.innerHTML = items.slice(0, 10).map(r =>
+        `<tr>` +
+          `<td class="mono ts">${esc(fmtTime(r.timestampIso))}</td>` +
+          `<td class="mono">${esc(r.method)}</td>` +
+          `<td class="mono args">${esc(r.args)}</td>` +
+          `<td><span class="status ${statusClass(r.status)}">${r.status}</span></td>` +
+          `<td class="mono dur">${r.durationMs} ms</td>` +
+        `</tr>`
+      ).join('');
+      summary.textContent = `Last ${Math.min(items.length, 10)} requests`;
+    }
+    render(initial);
+    async function refresh() {
+      try {
+        const res = await fetch('/requests', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        render(data);
+      } catch (e) { /* swallow */ }
+    }
+    setInterval(refresh, 5000);
+  })();
 </script>
 </body>
 </html>
 """;
+    }
+
+    private static string RenderAuthCard(IndexPageModel m)
+    {
+        var tokenUrl = $"http://localhost:{m.HttpPort}/token";
+        return $$"""
+
+      <div class="card auth-card" style="grid-column: 1 / -1">
+        <h2>Test credentials</h2>
+        <div class="auth-banner">
+          <strong>Auth enabled</strong> — these credentials are shown for testing
+          and accept requests against <code>/mcp</code>. Either method works.
+        </div>
+
+        <div class="cred-group">
+          <div class="cred-group-title">Static bearer token</div>
+          <div class="cred">
+            <span class="cred-label">token</span>
+            <span class="cred-value" id="v-bearer">{{m.BearerToken}}</span>
+            <button class="copy-btn" data-copy="v-bearer">Copy</button>
+          </div>
+        </div>
+
+        <div class="cred-group">
+          <div class="cred-group-title">OAuth2 client credentials</div>
+          <div class="cred">
+            <span class="cred-label">client_id</span>
+            <span class="cred-value" id="v-cid">{{m.ClientId}}</span>
+            <button class="copy-btn" data-copy="v-cid">Copy</button>
+          </div>
+          <div class="cred">
+            <span class="cred-label">client_secret</span>
+            <span class="cred-value" id="v-cs">{{m.ClientSecret}}</span>
+            <button class="copy-btn" data-copy="v-cs">Copy</button>
+          </div>
+          <div class="cred">
+            <span class="cred-label">token URL</span>
+            <span class="cred-value" id="v-turl">POST {{tokenUrl}}</span>
+            <button class="copy-btn" data-copy="v-turl">Copy</button>
+          </div>
+          <div class="cred">
+            <span class="cred-label">token TTL</span>
+            <span class="cred-value">{{m.TokenTtlSeconds}} seconds</span>
+            <span></span>
+          </div>
+        </div>
+      </div>
+""";
+    }
 }
 
 internal sealed record IndexPageModel(
@@ -206,4 +450,13 @@ internal sealed record IndexPageModel(
     string Os,
     int HttpPort,
     int HttpsPort,
-    string StartedAtIso);
+    string StartedAtIso,
+    bool AuthEnabled,
+    string? BearerToken,
+    string? ClientId,
+    string? ClientSecret,
+    int TokenTtlSeconds,
+    string CertFingerprint,
+    string CertNotBefore,
+    string CertNotAfter,
+    IReadOnlyList<RequestLogEntry> RecentRequests);

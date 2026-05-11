@@ -31,12 +31,18 @@ If a previous install is stuck "marked for deletion" (typically because `service
 
 ## Endpoints
 
-| Path       | Method   | Purpose                                                                 |
-|------------|----------|-------------------------------------------------------------------------|
-| `/`        | GET      | HTML dashboard (status pill, live uptime, ports, tools, endpoint links) |
-| `/info`    | GET      | Service metadata as JSON (version, ports, tools, uptime, machine, OS)   |
-| `/health`  | GET      | Health probe (`{"status":"ok","uptimeSeconds":...}`)                    |
-| `/mcp`     | POST/SSE | MCP Streamable HTTP transport                                           |
+| Path           | Method   | Purpose                                                                 |
+|----------------|----------|-------------------------------------------------------------------------|
+| `/`            | GET      | HTML dashboard (uptime, ports, cert info, test creds, recent requests)  |
+| `/info`        | GET      | Service metadata as JSON (version, ports, tools, uptime, cert, auth)    |
+| `/health`      | GET      | Health probe (`{"status":"ok","uptimeSeconds":...}`)                    |
+| `/logs`        | GET      | Live log viewer (HTML) with level filters, pause, and auto-refresh      |
+| `/logs/tail`   | GET      | Plain-text tail of today's log (`?n=500` to control line count)         |
+| `/requests`    | GET      | Last 50 MCP requests as JSON (method, args, status, duration)           |
+| `/cert.cer`    | GET      | TLS cert in DER format                                                  |
+| `/cert.pem`    | GET      | TLS cert in PEM format                                                  |
+| `/token`       | POST     | OAuth2 client_credentials → bearer token (only when auth is enabled)    |
+| `/mcp`         | POST/SSE | MCP Streamable HTTP transport (auth required when enabled)              |
 
 All endpoints are served on both `http://<host>:52080` and `https://<host>:52443`.
 
@@ -75,10 +81,49 @@ Defaults are written to `C:\Program Files\MathMcp\config.json`:
 
 Edit and restart the service to apply (`sc stop MathMcp && sc start MathMcp`). Re-running the installer preserves your edits.
 
+## Authentication (optional)
+
+Auth is **off by default**. To enable it, install with the `--auth` flag:
+
+```cmd
+MathMcp.exe --auth
+```
+
+This generates and prints three values, *once*:
+
+- A static bearer token (long-lived API key)
+- An OAuth2 `client_id` + `client_secret` pair
+
+You can view them at any time on `http://<host>:52080/`. They are also returned by `GET /info`. **These credentials are intentionally not secret** — this server is a testing target, and the values are published on the public index page so integrators can copy them out.
+
+Both methods work against `/mcp`:
+
+```bash
+# Static bearer
+curl -H "Authorization: Bearer mm_st_..." http://host:52080/mcp -d '...'
+
+# OAuth2 client_credentials → bearer
+curl -X POST http://host:52080/token \
+     -d "grant_type=client_credentials" \
+     -d "client_id=mm_cid_..." \
+     -d "client_secret=mm_cs_..."
+# → { "access_token": "mm_at_...", "token_type": "Bearer", "expires_in": 3600 }
+```
+
+Issued OAuth2 tokens are kept in memory only and are invalidated on service restart. Clients are expected to re-fetch on `401`.
+
+### Reinstall behavior
+
+- **`MathMcp.exe --auth` on an existing install** → preserves the existing credentials.
+- **`MathMcp.exe` (no `--auth`) on an auth-enabled install** → aborts with an error. Re-run with `--auth` to keep auth on, or `--auth off` to explicitly disable it. This prevents accidental security regression on a binary upgrade.
+- **`MathMcp.exe --auth off`** → disables auth and clears the credentials.
+- **`MathMcp.exe rotate-creds`** (admin) → regenerates all three values, restarts the service, and prints the new credentials.
+
 ## Logs
 
 - Windows Event Log, source: `MathMcp`
-- File log: `C:\Program Files\MathMcp\logs\` (rolling daily)
+- File log: `C:\Program Files\MathMcp\logs\` (rolling daily, 30-day retention)
+- Live web viewer at `http://<host>:52080/logs` — auto-refreshes every 3s, level filters, pausable
 
 ## Uninstall
 
@@ -95,7 +140,10 @@ This stops the service, removes the service registration, and deletes the instal
 | Command                                            | Effect                                              |
 |----------------------------------------------------|-----------------------------------------------------|
 | `MathMcp.exe`                                      | Install (silent; requires admin)                    |
+| `MathMcp.exe --auth`                               | Install with auth enabled (generates credentials)   |
+| `MathMcp.exe --auth off`                           | Reinstall with auth disabled                        |
 | `MathMcp.exe --http-port N --https-port N`         | Install with custom ports (writes to `config.json`) |
+| `MathMcp.exe rotate-creds`                         | Regenerate auth credentials and restart (admin)     |
 | `MathMcp.exe uninstall`                            | Uninstall                                           |
 | `MathMcp.exe run`                                  | Run in foreground (debugging — bypasses service)    |
 | `MathMcp.exe --version`                            | Print version and exit                              |

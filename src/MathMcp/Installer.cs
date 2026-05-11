@@ -6,6 +6,8 @@ using System.Security.Principal;
 
 namespace MathMcp;
 
+public enum AuthMode { NotSpecified, Enabled, ForceDisabled }
+
 [SupportedOSPlatform("windows")]
 public static class Installer
 {
@@ -26,11 +28,11 @@ public static class Installer
     public static string CertPath => Path.Combine(CertDir, "cert.pfx");
     public static string LogDir => Path.Combine(InstallDir, "logs");
 
-    public static int Install(int? httpPort = null, int? httpsPort = null)
+    public static int Install(int? httpPort = null, int? httpsPort = null, AuthMode authMode = AuthMode.NotSpecified)
     {
         if (!IsAdmin())
         {
-            return Relaunch(BuildInstallArgs(httpPort, httpsPort));
+            return Relaunch(BuildInstallArgs(httpPort, httpsPort, authMode));
         }
 
         var sourceExe = Process.GetCurrentProcess().MainModule?.FileName
@@ -71,6 +73,15 @@ public static class Installer
         var config = File.Exists(ConfigPath) ? Config.Load(ConfigPath) : new Config();
         var configChanged = !File.Exists(ConfigPath);
 
+        var currentAuthEnabled = config.Auth?.Enabled == true;
+        var (targetAuthEnabled, abortMessage) = ResolveTargetAuthState(currentAuthEnabled, authMode);
+        if (abortMessage is not null)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine(abortMessage);
+            return 1;
+        }
+
         if (httpPort is int hp && hp != config.HttpPort)
         {
             Console.WriteLine($"Setting HTTP port to {hp}");
@@ -81,6 +92,43 @@ public static class Installer
         {
             Console.WriteLine($"Setting HTTPS port to {hsp}");
             config.HttpsPort = hsp;
+            configChanged = true;
+        }
+
+        var freshCreds = false;
+        if (targetAuthEnabled)
+        {
+            if (config.Auth is null
+                || string.IsNullOrEmpty(config.Auth.BearerToken)
+                || string.IsNullOrEmpty(config.Auth.ClientId)
+                || string.IsNullOrEmpty(config.Auth.ClientSecret))
+            {
+                Console.WriteLine("Generating auth credentials...");
+                config.Auth = new AuthConfig
+                {
+                    Enabled = true,
+                    BearerToken  = CredentialGenerator.NewSecret(32, "mm_st_"),
+                    ClientId     = CredentialGenerator.NewSecret(16, "mm_cid_"),
+                    ClientSecret = CredentialGenerator.NewSecret(32, "mm_cs_"),
+                    TokenTtlSeconds = 3600,
+                };
+                freshCreds = true;
+                configChanged = true;
+            }
+            else if (!config.Auth.Enabled)
+            {
+                config.Auth.Enabled = true;
+                configChanged = true;
+            }
+            else
+            {
+                Console.WriteLine("Preserving existing auth credentials.");
+            }
+        }
+        else if (currentAuthEnabled)
+        {
+            Console.WriteLine("Disabling auth (clearing credentials)...");
+            config.Auth = null;
             configChanged = true;
         }
 
@@ -151,6 +199,103 @@ public static class Installer
         Console.WriteLine($"  Info:  http://localhost:{config.HttpPort}/");
         Console.WriteLine($"  MCP:   http://localhost:{config.HttpPort}/mcp");
         Console.WriteLine($"  HTTPS: https://localhost:{config.HttpsPort}/mcp");
+
+        if (freshCreds && config.Auth is not null)
+        {
+            PrintCredentialsBanner(config.Auth, config.HttpPort);
+        }
+        else if (targetAuthEnabled)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"  Auth:  enabled (view creds at http://localhost:{config.HttpPort}/)");
+        }
+        return 0;
+    }
+
+    private static (bool target, string? abortMessage) ResolveTargetAuthState(
+        bool currentEnabled, AuthMode authMode)
+    {
+        return (currentEnabled, authMode) switch
+        {
+            (false, AuthMode.NotSpecified)  => (false, null),
+            (false, AuthMode.Enabled)       => (true,  null),
+            (false, AuthMode.ForceDisabled) => (false, null),
+            (true,  AuthMode.Enabled)       => (true,  null),
+            (true,  AuthMode.ForceDisabled) => (false, null),
+            (true,  AuthMode.NotSpecified)  => (true,
+                "Service is currently installed with auth enabled. Re-run with --auth\n" +
+                "to preserve it, or --auth off to explicitly disable. This prevents\n" +
+                "accidental security regression on a binary upgrade."),
+            _ => (false, null),
+        };
+    }
+
+    private static void PrintCredentialsBanner(AuthConfig auth, int httpPort)
+    {
+        var bar = new string('=', 64);
+        Console.WriteLine();
+        Console.WriteLine(bar);
+        Console.WriteLine("  AUTH ENABLED — test credentials (save these now)");
+        Console.WriteLine(bar);
+        Console.WriteLine("  Static bearer token:");
+        Console.WriteLine($"    {auth.BearerToken}");
+        Console.WriteLine();
+        Console.WriteLine("  OAuth2 client credentials:");
+        Console.WriteLine($"    client_id     : {auth.ClientId}");
+        Console.WriteLine($"    client_secret : {auth.ClientSecret}");
+        Console.WriteLine($"    token URL     : http://localhost:{httpPort}/token");
+        Console.WriteLine();
+        Console.WriteLine($"  Visit http://localhost:{httpPort}/ to view again any time.");
+        Console.WriteLine(bar);
+    }
+
+    public static int RotateCreds()
+    {
+        if (!IsAdmin())
+        {
+            return Relaunch("rotate-creds");
+        }
+
+        if (!File.Exists(ConfigPath))
+        {
+            Console.Error.WriteLine($"Config not found: {ConfigPath}");
+            Console.Error.WriteLine("Service is not installed. Run MathMcp.exe (with --auth) first.");
+            return 1;
+        }
+
+        var config = Config.Load(ConfigPath);
+        if (config.Auth?.Enabled != true)
+        {
+            Console.Error.WriteLine("Auth is not enabled. Run install with --auth first.");
+            return 1;
+        }
+
+        Console.WriteLine("Rotating auth credentials...");
+        config.Auth.BearerToken  = CredentialGenerator.NewSecret(32, "mm_st_");
+        config.Auth.ClientId     = CredentialGenerator.NewSecret(16, "mm_cid_");
+        config.Auth.ClientSecret = CredentialGenerator.NewSecret(32, "mm_cs_");
+        config.Save(ConfigPath);
+
+        if (ServiceExists())
+        {
+            Console.WriteLine("Restarting service to pick up new credentials...");
+            RunSc("stop", ServiceName);
+            WaitForServiceState("STOPPED", timeoutSeconds: 20);
+            var (startExit, _, startErr) = Run("sc.exe", new[] { "start", ServiceName });
+            if (startExit != 0)
+            {
+                Console.Error.WriteLine($"Service failed to start (sc start exit {startExit}).");
+                if (!string.IsNullOrWhiteSpace(startErr)) Console.Error.WriteLine(startErr);
+                return 1;
+            }
+            if (!WaitForServiceState("RUNNING", timeoutSeconds: 30))
+            {
+                Console.Error.WriteLine("Service did not reach RUNNING state within 30 seconds.");
+                return 1;
+            }
+        }
+
+        PrintCredentialsBanner(config.Auth, config.HttpPort);
         return 0;
     }
 
@@ -249,9 +394,11 @@ public static class Installer
         }
     }
 
-    private static string BuildInstallArgs(int? httpPort, int? httpsPort)
+    private static string BuildInstallArgs(int? httpPort, int? httpsPort, AuthMode authMode)
     {
         var parts = new List<string>();
+        if (authMode == AuthMode.Enabled) { parts.Add("--auth"); }
+        else if (authMode == AuthMode.ForceDisabled) { parts.Add("--auth"); parts.Add("off"); }
         if (httpPort is int hp) { parts.Add("--http-port"); parts.Add(hp.ToString()); }
         if (httpsPort is int hsp) { parts.Add("--https-port"); parts.Add(hsp.ToString()); }
         return string.Join(' ', parts);
