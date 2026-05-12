@@ -355,7 +355,9 @@ internal static class LogsPage
   const HOST_RE = /\bhost=([^\s]+)/;
 
   function parseRecords(text) {
-    const lines = text.split('\n');
+    // Serilog on Windows writes CRLF; split on either newline form so the
+    // regex's $ anchor isn't tripped by a trailing \r.
+    const lines = text.split(/\r?\n/);
     if (lines.length && lines[lines.length - 1] === '') lines.pop();
     const out = [];
     let cur = null;
