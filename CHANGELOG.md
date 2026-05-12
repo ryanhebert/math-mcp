@@ -2,6 +2,14 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.13] — 2026-05-12
+
+### Changed
+- **401 responses now carry full re-auth instructions in the `WWW-Authenticate` header** per RFC 6750 §3 + RFC 9728 + MCP 2025-06-18 auth-spec. When a bearer is unrecognized or malformed, the response includes `error=…, error_description=…, resource_metadata=…`. The JSON body also includes `resource_metadata`, `authorization_server`, and `token_endpoint` URLs. MCP-spec-compliant clients can now discover the token endpoint and re-authenticate automatically when their cached bearer goes stale (e.g., after a service restart).
+
+### Why
+A gateway forwarding a stale OAuth bearer to a restarted service kept getting flat 401s without enough information to recover. The new response is the standards-compliant "please re-authenticate, here's where" challenge — the client SDK reads `resource_metadata`, walks the discovery chain (added in v1.0.11), gets a fresh token, and retries. No manual intervention.
+
 ## [v1.0.12] — 2026-05-12
 
 ### Logs page overhaul

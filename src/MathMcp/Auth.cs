@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -89,7 +90,7 @@ public sealed class AuthMiddleware
 
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
-            await WriteUnauthorized(context, "malformed Authorization header");
+            await WriteUnauthorized(context, "invalid_request", "malformed Authorization header");
             return;
         }
 
@@ -113,17 +114,43 @@ public sealed class AuthMiddleware
             return;
         }
 
-        _logger.LogWarning("Token check on /mcp → 401 (bearer not recognized)");
-        await WriteUnauthorized(context, "bearer token not recognized");
+        _logger.LogWarning(
+            "Token check on /mcp → 401 invalid_token — re-auth instructions sent in WWW-Authenticate");
+        await WriteUnauthorized(context, "invalid_token", "bearer token not recognized");
     }
 
-    private static async Task WriteUnauthorized(HttpContext context, string detail)
+    /// <summary>
+    /// RFC 6750 + RFC 9728 + MCP 2025-06-18 auth-spec compliant 401 response.
+    /// The <c>WWW-Authenticate</c> header points the client at the protected-resource
+    /// metadata document so an MCP-spec-aware client can discover the token endpoint
+    /// and re-authenticate automatically.
+    /// </summary>
+    private static async Task WriteUnauthorized(HttpContext context, string error, string detail)
     {
+        var origin = $"{context.Request.Scheme}://{context.Request.Host.Value}";
+        var resourceMetadata = $"{origin}/.well-known/oauth-protected-resource";
+        var asMetadata       = $"{origin}/.well-known/oauth-authorization-server";
+        var tokenEndpoint    = $"{origin}/token";
+
+        // Quoted-string values inside WWW-Authenticate per RFC 6750 §3.
+        var safeDetail = detail.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        var challenge =
+            $"Bearer realm=\"MathMcp\"" +
+            $", error=\"{error}\"" +
+            $", error_description=\"{safeDetail}\"" +
+            $", resource_metadata=\"{resourceMetadata}\"";
+
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        context.Response.Headers.WWWAuthenticate = "Bearer realm=\"MathMcp\"";
+        context.Response.Headers.WWWAuthenticate = challenge;
         context.Response.ContentType = "application/json";
-        await context.Response.WriteAsync(
-            $"{{\"error\":\"unauthorized\",\"error_description\":\"{detail}\"}}");
+        await context.Response.WriteAsync(JsonSerializer.Serialize(new
+        {
+            error,
+            error_description = detail,
+            resource_metadata = resourceMetadata,
+            authorization_server = asMetadata,
+            token_endpoint = tokenEndpoint,
+        }));
     }
 }
 
