@@ -2,6 +2,42 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.19] — 2026-05-12
+
+Hardening pass from the v1.0.18 code review. Deferred items are tracked
+in `docs/BACKLOG.md` (B11–B18).
+
+### Fixed
+- **TLS cert auto-renews at startup.** `CertificateProvider.EnsureCert`
+  now inspects `NotAfter` on the existing pfx and regenerates when the
+  cert is past expiry or within 30 days of it. `ServiceHost.Run` calls
+  `EnsureCert` before `Load`, so a year-old running install self-heals on
+  next service restart. Renewal emits a `Warning` line with old → new
+  `NotAfter` so operators can spot fingerprint changes. Previously the
+  cert was only generated at first install and would silently expire 365
+  days later, breaking TLS until someone reinstalled.
+- **`/token` rejects when the server has no configured credentials.**
+  Defense in depth: an empty `client_id` and `client_secret` in config
+  would otherwise satisfy `CryptographicOperations.FixedTimeEquals(empty,
+  empty)` and mint a real bearer. Now returns `503 server_error` with no
+  token issued. Reachable today only via manual config edits, but the
+  guard makes the failure mode loud.
+- **Present-but-invalid bearer on `/mcp` returns 401.** Reverts the
+  v1.0.16 fall-through. The README has always documented this — the
+  v1.0.16 behavior was a regression for integrators who specifically need
+  to test their client's 401 / token-refresh path. Anonymous (no
+  `Authorization` header at all) still works in mixed mode. Drive-by win:
+  multi-`Authorization`-header concatenation attacks now also 401 instead
+  of silently downgrading.
+
+### Changed
+- **`/info.cert.san` (string) → `/info.cert.sans` (array).** The field
+  was hard-coded to `"localhost"` even after v1.0.15 added FQDN +
+  machine-name SANs to the cert. Now extracted from the actual cert
+  extension via `X509SubjectAlternativeNameExtension`, so the JSON
+  reflects every name the cert validates for. Breaking change to the
+  `/info` JSON shape for any integrator that consumed `cert.san`.
+
 ## [v1.0.18] — 2026-05-12
 
 ### Added

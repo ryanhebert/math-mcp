@@ -7,12 +7,16 @@ public static class CertificateProvider
 {
     private const int KeySizeBits = 2048;
     private const int ValidityDays = 365;
+    private const int RenewWithinDays = 30;
     private const string SubjectName = "CN=localhost";
     private const string SanDnsName = "localhost";
 
-    public static void EnsureCert(string pfxPath)
+    public enum EnsureResult { AlreadyValid, Created, Renewed }
+
+    public static EnsureResult EnsureCert(string pfxPath)
     {
-        if (File.Exists(pfxPath)) return;
+        var existed = File.Exists(pfxPath);
+        if (existed && !NeedsRenewal(pfxPath)) return EnsureResult.AlreadyValid;
 
         Directory.CreateDirectory(Path.GetDirectoryName(pfxPath)!);
 
@@ -52,6 +56,42 @@ public static class CertificateProvider
         using var cert = request.CreateSelfSigned(notBefore, notAfter);
         var pfxBytes = cert.Export(X509ContentType.Pfx);
         File.WriteAllBytes(pfxPath, pfxBytes);
+        return existed ? EnsureResult.Renewed : EnsureResult.Created;
+    }
+
+    /// <summary>
+    /// Returns the existing cert's <c>NotAfter</c> as a string (best-effort,
+    /// for log messages) or <c>"unreadable"</c> if the file can't be parsed.
+    /// Uses <see cref="X509KeyStorageFlags.EphemeralKeySet"/> so we don't
+    /// import the private key into the machine key store just to peek.
+    /// </summary>
+    public static string DescribeExpiry(string pfxPath)
+    {
+        try
+        {
+            using var cert = new X509Certificate2(
+                pfxPath, (string?)null, X509KeyStorageFlags.EphemeralKeySet);
+            return cert.NotAfter.ToString("yyyy-MM-dd");
+        }
+        catch
+        {
+            return "unreadable";
+        }
+    }
+
+    private static bool NeedsRenewal(string pfxPath)
+    {
+        try
+        {
+            using var cert = new X509Certificate2(
+                pfxPath, (string?)null, X509KeyStorageFlags.EphemeralKeySet);
+            return cert.NotAfter <= DateTime.Now.AddDays(RenewWithinDays);
+        }
+        catch
+        {
+            // Corrupt / unreadable pfx — treat as needing regeneration.
+            return true;
+        }
     }
 
     public static X509Certificate2 Load(string pfxPath) =>

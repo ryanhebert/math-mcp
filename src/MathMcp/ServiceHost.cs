@@ -35,6 +35,13 @@ public static class ServiceHost
         }
 
         var config = Config.Load(configPath);
+
+        // Self-renew if the existing cert is past — or within 30 days of — its
+        // NotAfter. Without this the service would happily keep serving an
+        // expired cert until the operator reinstalled. Logged below once the
+        // logger is up.
+        var prevExpiry = CertificateProvider.DescribeExpiry(certPath);
+        var certEnsureResult = CertificateProvider.EnsureCert(certPath);
         var cert = CertificateProvider.Load(certPath);
 
         Directory.CreateDirectory(Installer.LogDir);
@@ -118,6 +125,14 @@ public static class ServiceHost
                 config.HttpPort, config.HttpsPort,
                 port80Available ? "active" : "skipped (in use)",
                 config.Auth?.Enabled == true ? "enabled" : "disabled");
+
+            if (certEnsureResult == CertificateProvider.EnsureResult.Renewed)
+            {
+                startupLogger.LogWarning(
+                    "TLS cert auto-renewed at startup. previous_not_after={Prev} new_not_after={New}. " +
+                    "Clients that pinned the old fingerprint will need to refresh.",
+                    prevExpiry, cert.NotAfter.ToString("yyyy-MM-dd"));
+            }
 
             CleanupStaleUpgradeArtefacts(startupLogger);
 
@@ -286,6 +301,7 @@ public static class ServiceHost
         var fingerprint = ComputeFingerprint(cert);
         var certNotBefore = cert.NotBefore.ToString("yyyy-MM-dd");
         var certNotAfter = cert.NotAfter.ToString("yyyy-MM-dd");
+        var certSans = ExtractSans(cert);
 
         app.MapGet("/", (RequestLog rl) =>
         {
@@ -325,7 +341,7 @@ public static class ServiceHost
             os = Environment.OSVersion.ToString(),
             cert = new
             {
-                san = "localhost",
+                sans = certSans,
                 notBefore = cert.NotBefore.ToString("O"),
                 notAfter = cert.NotAfter.ToString("O"),
                 fingerprintSha256 = fingerprint,
@@ -467,6 +483,14 @@ public static class ServiceHost
 
         app.MapGet("/cert.pem", () => Results.File(
             pemBytes, "application/x-pem-file", "mathmcp.pem"));
+    }
+
+    private static string[] ExtractSans(X509Certificate2 cert)
+    {
+        var ext = cert.Extensions
+            .OfType<X509SubjectAlternativeNameExtension>()
+            .FirstOrDefault();
+        return ext?.EnumerateDnsNames().ToArray() ?? Array.Empty<string>();
     }
 
     private static string ComputeFingerprint(X509Certificate2 cert)

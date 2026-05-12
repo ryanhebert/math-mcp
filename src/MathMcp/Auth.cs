@@ -117,18 +117,14 @@ public sealed class AuthMiddleware
             return;
         }
 
-        // Mixed-mode test server: when a bearer is presented but we don't
-        // recognize it, fall through as anonymous. This matches the original
-        // design intent ("any of these three should work") and accommodates
-        // upstream gateways that forward stale or foreign Authorization
-        // headers — e.g., a JWT from an unrelated identity in a misconfigured
-        // 'no auth' gateway mode. The bearer prefix is still logged for
-        // diagnostics so misconfigured clients are visible without breaking
-        // the request flow.
+        // Present-but-invalid bearer → 401, so integrators can exercise their
+        // client's rejection / refresh path. Anonymous (no header) still works
+        // — mixed mode means a client can choose to send no auth, but if it
+        // sends a bearer we hold it to a real value.
         _logger.LogWarning(
-            "Token check on /mcp → unrecognized bearer presented={Preview} — falling through as anonymous",
+            "Token check on /mcp → 401 invalid bearer presented={Preview}",
             Truncate(presented));
-        await _next(context);
+        await WriteUnauthorized(context, "invalid_token", "bearer token not recognized");
     }
 
     /// <summary>
@@ -186,6 +182,22 @@ public static class TokenEndpoint
         {
             var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "-";
             var contentType = ctx.Request.ContentType ?? "(none)";
+
+            // Defense in depth: refuse to issue tokens when the server has no
+            // configured credentials. Without this guard, FixedTimeEquals of
+            // two empty byte arrays returns true, so an attacker posting
+            // client_id=&client_secret= would mint a real bearer.
+            if (string.IsNullOrEmpty(config.ClientId) ||
+                string.IsNullOrEmpty(config.ClientSecret))
+            {
+                logger.LogError(
+                    "Token request rejected: server has no client credentials configured " +
+                    "ip={Ip} status=503 reason=server_error",
+                    ip);
+                return Results.Json(
+                    new { error = "server_error", error_description = "client credentials not configured" },
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
 
             if (!ctx.Request.HasFormContentType)
             {
