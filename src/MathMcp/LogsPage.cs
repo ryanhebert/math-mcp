@@ -343,7 +343,11 @@ internal static class LogsPage
 
     <div class="toolbar">
       <div class="meta">
-        <span class="meta-item">File <strong id="m-file">{{m.LogFileName}}</strong></span>
+        <span class="meta-item">Date
+          <select id="m-date" class="search-box" style="width:auto; padding-left:8px; background-image:none; cursor:pointer; margin-left:4px;">
+            <option value="">Today (live)</option>
+          </select>
+        </span>
         <span class="meta-item">Size <strong id="m-size">—</strong></span>
         <span class="meta-item">Shown <strong id="m-shown">—</strong> / <strong id="m-total">—</strong></span>
         <span class="meta-item">Refreshed <strong id="last-refresh">just now</strong></span>
@@ -404,6 +408,7 @@ internal static class LogsPage
   let lastRefreshTime = Date.now();
   let records = [];
   let rawText = '';
+  let selectedDate = '';   // '' = today/live; 'yyyy-mm-dd' = historical
 
   const logEl     = document.getElementById('log');
   const filtersEl = document.getElementById('filters');
@@ -413,6 +418,7 @@ internal static class LogsPage
   const searchEl  = document.getElementById('search');
   const cWrn      = document.getElementById('c-wrn');
   const cErr      = document.getElementById('c-err');
+  const dateSel   = document.getElementById('m-date');
   const statusEl  = document.getElementById('status');
   const statusTxt = document.getElementById('status-text');
   const autoHint  = document.getElementById('auto-pause-hint');
@@ -839,11 +845,43 @@ internal static class LogsPage
     render();
   });
 
+  // ===== Date picker =====
+  async function loadDates() {
+    try {
+      const r = await fetch('/logs/dates', { cache: 'no-store' });
+      if (!r.ok) return;
+      const dates = await r.json();
+      const today = new Date().toISOString().slice(0, 10);
+      for (const d of dates) {
+        if (d === today) continue; // already covered by the "Today" entry
+        const opt = document.createElement('option');
+        opt.value = d;
+        opt.textContent = d;
+        dateSel.appendChild(opt);
+      }
+    } catch (_) { /* offline; ignore */ }
+  }
+  dateSel.addEventListener('change', () => {
+    selectedDate = dateSel.value;
+    // Reset auto-pause state; for historical dates we don't want to auto-pause
+    // since there's no new content arriving anyway.
+    pausedAuto = false;
+    setStatusUi();
+    refresh();
+    restartLivePoll();
+  });
+  loadDates();
+
   // ===== Fetch loop =====
   async function refresh() {
-    if (pausedManual || pausedAuto) return;
+    // Live tail pauses on manual or auto-pause. Historical dates always refresh
+    // once (no new data to skip).
+    if (!selectedDate && (pausedManual || pausedAuto)) return;
     try {
-      const res = await fetch('/logs/tail?n=500', { cache: 'no-store' });
+      const url = selectedDate
+        ? `/logs/tail?n=500&date=${encodeURIComponent(selectedDate)}`
+        : '/logs/tail?n=500';
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) return;
       const text = await res.text();
       mSize.textContent = `${(text.length / 1024).toFixed(1)} KB`;
@@ -851,7 +889,7 @@ internal static class LogsPage
       records = parseRecords(text);
       render();
       lastRefreshTime = Date.now();
-      lastRef.textContent = 'just now';
+      lastRef.textContent = selectedDate ? `loaded ${selectedDate}` : 'just now';
     } catch (e) { /* swallow */ }
   }
 
@@ -861,8 +899,16 @@ internal static class LogsPage
     lastRef.textContent = elapsed === 0 ? 'just now' : `${elapsed}s ago`;
   }, 1000);
 
+  let livePollTimer = null;
+  function restartLivePoll() {
+    if (livePollTimer) clearInterval(livePollTimer);
+    // Only auto-refresh when viewing the live (today) tail; historical files
+    // don't change, so polling is wasted work.
+    if (!selectedDate) livePollTimer = setInterval(refresh, 3000);
+  }
+
   refresh().then(() => snapToNewest());
-  setInterval(refresh, 3000);
+  restartLivePoll();
 </script>
 </body>
 </html>

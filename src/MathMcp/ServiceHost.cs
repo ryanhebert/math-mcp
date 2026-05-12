@@ -119,6 +119,8 @@ public static class ServiceHost
                 port80Available ? "active" : "skipped (in use)",
                 config.Auth?.Enabled == true ? "enabled" : "disabled");
 
+            CleanupStaleUpgradeArtefacts(startupLogger);
+
             // Port 80 (if bound) is reserved exclusively for the OAuth /token
             // endpoint. Other paths return 404 there. The main MCP surface,
             // dashboard, logs, etc. stay on the configured HTTP/HTTPS ports.
@@ -373,10 +375,23 @@ public static class ServiceHost
             return Results.Content(html, "text/html; charset=utf-8");
         });
 
-        app.MapGet("/logs/tail", (int? n) =>
+        app.MapGet("/logs/tail", (int? n, string? date) =>
         {
             var count = Math.Clamp(n ?? 500, 1, 5000);
-            var filePath = Path.Combine(Installer.LogDir, $"mathmcp-{DateTime.Now:yyyyMMdd}.log");
+            // Validate the optional date: yyyy-MM-dd only. Anything else
+            // falls back to today and is path-traversal-safe.
+            string dateStamp;
+            if (!string.IsNullOrEmpty(date) &&
+                System.Text.RegularExpressions.Regex.IsMatch(date, @"^\d{4}-\d{2}-\d{2}$"))
+            {
+                dateStamp = date.Replace("-", "");
+            }
+            else
+            {
+                dateStamp = DateTime.Now.ToString("yyyyMMdd");
+            }
+
+            var filePath = Path.Combine(Installer.LogDir, $"mathmcp-{dateStamp}.log");
             if (!File.Exists(filePath)) return Results.Text("", "text/plain; charset=utf-8");
 
             string text;
@@ -394,6 +409,26 @@ public static class ServiceHost
                 text = string.Join('\n', lines.Skip(start));
             }
             return Results.Text(text, "text/plain; charset=utf-8");
+        });
+
+        // List which dated log files exist (newest first). Lets the UI
+        // populate a date picker; daily retention is 30 days.
+        app.MapGet("/logs/dates", () =>
+        {
+            if (!Directory.Exists(Installer.LogDir))
+            {
+                return Results.Json(Array.Empty<string>());
+            }
+            var re = new System.Text.RegularExpressions.Regex(@"^mathmcp-(\d{4})(\d{2})(\d{2})\.log$");
+            var dates = Directory.EnumerateFiles(Installer.LogDir, "mathmcp-*.log")
+                .Select(Path.GetFileName)
+                .Where(n => n != null)
+                .Select(n => re.Match(n!))
+                .Where(m => m.Success)
+                .Select(m => $"{m.Groups[1].Value}-{m.Groups[2].Value}-{m.Groups[3].Value}")
+                .OrderByDescending(d => d)
+                .ToArray();
+            return Results.Json(dates);
         });
     }
 
@@ -450,6 +485,12 @@ public static class ServiceHost
         return sb.ToString();
     }
 
+    // Guard for concurrent /upgrade calls. The pipeline writes shared files
+    // (MathMcp.exe.new, upgrade-helper.cmd) and triggers a service stop, so
+    // we serialize. Reset on early failure; left set on success because the
+    // service is about to exit anyway.
+    private static int _upgradeInFlight;
+
     private static void MapUpgradeEndpoint(WebApplication app)
     {
         // POST /upgrade — downloads a newer MathMcp.exe from GitHub, writes a
@@ -467,6 +508,16 @@ public static class ServiceHost
         {
             var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>()
                 .CreateLogger("MathMcp.Upgrade");
+
+            if (Interlocked.CompareExchange(ref _upgradeInFlight, 1, 0) != 0)
+            {
+                logger.LogWarning(
+                    "Upgrade rejected: already in progress ip={Ip}",
+                    ctx.Connection.RemoteIpAddress);
+                return Results.Json(
+                    new { status = "error", error = "upgrade_in_progress" },
+                    statusCode: 409);
+            }
 
             string version = "latest";
             try
@@ -487,6 +538,7 @@ public static class ServiceHost
             if (version != "latest" &&
                 !System.Text.RegularExpressions.Regex.IsMatch(version, @"^v\d+\.\d+\.\d+(\.\d+)?$"))
             {
+                Interlocked.Exchange(ref _upgradeInFlight, 0);
                 return Results.Json(new { status = "error", error = "invalid_version" }, statusCode: 400);
             }
 
@@ -500,11 +552,18 @@ public static class ServiceHost
             var newExePath = Path.Combine(Installer.InstallDir, "MathMcp.exe.new");
             var helperPath = Path.Combine(Installer.InstallDir, "upgrade-helper.cmd");
             var installedExePath = Installer.InstalledExePath;
+            var failMarker     = Path.Combine(Installer.InstallDir, "upgrade-failed.txt");
 
             _ = Task.Run(async () =>
             {
+                var clearLock = true;
                 try
                 {
+                    // Pre-clean any leftover staging artefacts from a previous
+                    // attempt — overwriting protects against a half-written file.
+                    TryDelete(newExePath);
+                    TryDelete(failMarker);
+
                     using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
                     var asmVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0";
                     http.DefaultRequestHeaders.UserAgent.ParseAdd($"MathMcp-Upgrade/{asmVersion}");
@@ -523,6 +582,11 @@ public static class ServiceHost
                     await File.WriteAllBytesAsync(newExePath, bytes);
                     logger.LogInformation("Wrote {Bytes} bytes to {Path}", bytes.Length, newExePath);
 
+                    // Helper batch: stops the service, waits for the .exe file to
+                    // be unlocked, retries the swap up to 10× (handles antivirus
+                    // briefly holding the file), then restarts. On unrecoverable
+                    // swap failure, writes a marker file and restarts the OLD
+                    // binary so the service comes back up rather than dying silent.
                     var helperContent =
                         "@echo off\r\n" +
                         "timeout /t 3 /nobreak >nul\r\n" +
@@ -533,7 +597,17 @@ public static class ServiceHost
                         "timeout /t 1 /nobreak >nul\r\n" +
                         "goto :wait_exit\r\n" +
                         ":swap\r\n" +
+                        "set RETRY=0\r\n" +
+                        ":try_swap\r\n" +
                         $"move /y \"{newExePath}\" \"{installedExePath}\" >nul 2>&1\r\n" +
+                        "if not errorlevel 1 goto :start\r\n" +
+                        "set /a RETRY+=1\r\n" +
+                        "if %RETRY% lss 10 (\r\n" +
+                        "  timeout /t 1 /nobreak >nul\r\n" +
+                        "  goto :try_swap\r\n" +
+                        ")\r\n" +
+                        $"echo Upgrade swap failed at %date% %time% (target={version})> \"{failMarker}\"\r\n" +
+                        ":start\r\n" +
                         $"sc start {Installer.ServiceName} >nul 2>&1\r\n" +
                         "exit /b 0\r\n";
                     await File.WriteAllTextAsync(helperPath, helperContent);
@@ -550,10 +624,15 @@ public static class ServiceHost
                     logger.LogInformation(
                         "Upgrade helper spawned (PID {Pid}). Service stop will follow in ~3s.",
                         p?.Id);
+                    clearLock = false; // We got far enough; lock stays set until process dies.
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Upgrade pipeline failed");
+                }
+                finally
+                {
+                    if (clearLock) Interlocked.Exchange(ref _upgradeInFlight, 0);
                 }
             });
 
@@ -564,6 +643,41 @@ public static class ServiceHost
                 note = "Watch /info — the 'version' field will change when the new binary is running.",
             }, statusCode: 202);
         });
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>
+    /// At service startup, scrub any leftover upgrade-related files. These
+    /// can persist when a prior upgrade attempt failed before the swap, or
+    /// when the user manually canceled. Surfaces a one-time warning if we
+    /// see an <c>upgrade-failed.txt</c> marker so operators know to check.
+    /// </summary>
+    private static void CleanupStaleUpgradeArtefacts(Microsoft.Extensions.Logging.ILogger logger)
+    {
+        var newExe = Path.Combine(Installer.InstallDir, "MathMcp.exe.new");
+        var helper = Path.Combine(Installer.InstallDir, "upgrade-helper.cmd");
+        var marker = Path.Combine(Installer.InstallDir, "upgrade-failed.txt");
+
+        if (File.Exists(marker))
+        {
+            try
+            {
+                var content = File.ReadAllText(marker).Trim();
+                logger.LogWarning(
+                    "Previous /upgrade attempt left a failure marker: {Content}. Old binary is still running.",
+                    content);
+            }
+            catch { /* ignore */ }
+            TryDelete(marker);
+        }
+
+        TryDelete(newExe);
+        TryDelete(helper);
     }
 
     private static LogEventLevel ParseSerilogLevel(string s) => s.ToLowerInvariant() switch

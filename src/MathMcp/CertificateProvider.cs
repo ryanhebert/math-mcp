@@ -25,6 +25,15 @@ public static class CertificateProvider
 
         var sanBuilder = new SubjectAlternativeNameBuilder();
         sanBuilder.AddDnsName(SanDnsName);
+
+        // Also add the machine name and FQDN so clients connecting via those
+        // hostnames (instead of "localhost") don't get a TLS hostname-mismatch
+        // warning. ResolveFqdn falls back to the machine name when no domain
+        // suffix is set, so the dedupe below catches that case.
+        var sansAdded = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { SanDnsName };
+        TryAddSan(sanBuilder, sansAdded, NetInfo.ResolveFqdn());
+        TryAddSan(sanBuilder, sansAdded, Environment.MachineName);
+
         request.CertificateExtensions.Add(sanBuilder.Build());
 
         request.CertificateExtensions.Add(
@@ -47,4 +56,12 @@ public static class CertificateProvider
 
     public static X509Certificate2 Load(string pfxPath) =>
         new(pfxPath, (string?)null, X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
+
+    private static void TryAddSan(SubjectAlternativeNameBuilder b, HashSet<string> seen, string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+        if (!seen.Add(name)) return;
+        try { b.AddDnsName(name); }
+        catch { /* silently skip invalid DNS labels */ }
+    }
 }

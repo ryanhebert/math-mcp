@@ -2,6 +2,23 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.15] — 2026-05-12
+
+Hardening pass following the post-v1.0.14 code review. Items deferred for
+future releases are tracked in `docs/BACKLOG.md`.
+
+### Fixed
+- **Concurrent `/upgrade` calls are now serialized** via an `Interlocked` flag. Second simultaneous request returns 409 `upgrade_in_progress` instead of fighting over the staging file. (B1)
+- **Stale upgrade artefacts are scrubbed at every service start** — leftover `MathMcp.exe.new` and `upgrade-helper.cmd` from a previously-failed upgrade no longer linger. If a prior swap left an `upgrade-failed.txt` marker behind, the startup log surfaces it as a warning so operators can investigate. (B2 + E14)
+- **Helper batch retries the binary swap** up to 10× (1 s apart) instead of failing silently on the first locked-file error (commonly antivirus briefly holding the running .exe). On unrecoverable failure, writes `upgrade-failed.txt` and restarts the *old* binary so the service comes back up rather than dying silently. (B4)
+
+### Added
+- **Multi-day log viewer.** `/logs/tail` now accepts `?date=YYYY-MM-DD`; new `/logs/dates` endpoint returns all dates with files in the retention window. The `/logs` page surfaces a **Date** dropdown — "Today (live)" plus every prior day on file. Selecting a historical date pauses auto-refresh (no new data to fetch) and displays that day's tail. (E1)
+- **Cert SAN now includes the FQDN and the machine name** in addition to `localhost`. Clients connecting via `https://server.example.com:52443/mcp` (or via the bare machine name) no longer get a TLS hostname-mismatch warning. Existing installs keep their old cert; to pick up the new SANs, delete `C:\Program Files\MathMcp\certs\cert.pfx` and reinstall. (E7)
+
+### Changed
+- **AuthMiddleware logs successful auth at Information** (was Debug). Operators see `Token check on /mcp → allow (anonymous|static bearer|issued bearer)` at the default `logLevel=Information` without having to bump global logging. (E11)
+
 ## [v1.0.14] — 2026-05-12
 
 ### Added

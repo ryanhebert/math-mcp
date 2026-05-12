@@ -83,7 +83,7 @@ public sealed class AuthMiddleware
         // — static bearer, OAuth2-issued bearer, or no header — pass through.
         if (string.IsNullOrWhiteSpace(header))
         {
-            _logger.LogDebug("Token check on /mcp → allow (anonymous)");
+            _logger.LogInformation("Token check on /mcp → allow (anonymous)");
             await _next(context);
             return;
         }
@@ -105,14 +105,14 @@ public sealed class AuthMiddleware
                 Encoding.UTF8.GetBytes(presented),
                 Encoding.UTF8.GetBytes(staticToken)))
         {
-            _logger.LogDebug("Token check on /mcp → allow (static bearer)");
+            _logger.LogInformation("Token check on /mcp → allow (static bearer)");
             await _next(context);
             return;
         }
 
         if (_tokenStore.IsValid(presented))
         {
-            _logger.LogDebug("Token check on /mcp → allow (issued bearer)");
+            _logger.LogInformation("Token check on /mcp → allow (issued bearer)");
             await _next(context);
             return;
         }
