@@ -12,7 +12,7 @@ Distributed as a single self-contained `MathMcp.exe`. No .NET runtime install re
 
 ## Install
 
-1. Download the latest `MathMcp.exe`: <https://github.com/ryanhebert/math-mcp/releases/latest>
+1. **Download the latest `MathMcp.exe`:** <https://github.com/ryanhebert/math-mcp/releases/latest/download/MathMcp.exe>
 
     Past versions and changelogs: <https://github.com/ryanhebert/math-mcp/releases>
 2. Double-click it. The .exe has the `requireAdministrator` manifest, so Windows shows the UAC prompt automatically. Accept it.
@@ -55,10 +55,12 @@ Example Claude Desktop / Claude Code config:
 ```json
 {
   "mcpServers": {
-    "math": { "url": "http://<host>:52080/mcp" }
+    "math": { "url": "http://<host>/mcp" }
   }
 }
 ```
+
+(Use `http://<host>:52080/mcp` if port 80 is in use on the server.)
 
 ## Tools, prompts, resources
 
@@ -121,15 +123,17 @@ You can view them at any time on `http://<host>:52080/`. They are also returned 
 
 All three of these work against `/mcp`:
 
+URLs below assume port 80 is free at service startup (the default). If something else holds port 80 the same endpoints are available at `:52080` instead — the dashboard shows the live port in either case.
+
 ```bash
 # No auth — works in mixed mode
-curl http://host:52080/mcp -d '...'
+curl http://host/mcp -d '...'
 
 # Static bearer
-curl -H "Authorization: Bearer mm_st_..." http://host:52080/mcp -d '...'
+curl -H "Authorization: Bearer mm_st_..." http://host/mcp -d '...'
 
 # OAuth2 client_credentials → bearer
-curl -X POST http://host:52080/token \
+curl -X POST http://host/token \
      -d "grant_type=client_credentials" \
      -d "client_id=mm_cid_..." \
      -d "client_secret=mm_cs_..."

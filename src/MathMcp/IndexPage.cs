@@ -25,6 +25,7 @@ internal static class IndexPage
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Math MCP Server</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {
     --bg: #0b1020;
@@ -260,9 +261,11 @@ internal static class IndexPage
       <div class="card">
         <h2>Listening</h2>
         <dl>
-          <dt>HTTP port</dt>   <dd class="mono">{{m.HttpPort}}</dd>
+          <dt>HTTP port</dt>   <dd class="mono">{{m.HttpPort}}{{(m.TokenPort == 80 ? " + 80 (active)" : "")}}</dd>
           <dt>HTTPS port</dt>  <dd class="mono">{{m.HttpsPort}}</dd>
+          {{(m.AuthEnabled ? $"<dt>Token URL</dt>   <dd class=\"mono\" style=\"word-break:break-all\">{NetInfo.HttpUrl("localhost", m.TokenPort, "/token")}</dd>" : "")}}
           <dt>Bind</dt>        <dd class="mono">0.0.0.0 (all interfaces)</dd>
+          <dt>FQDN</dt>        <dd class="mono">{{m.Fqdn}}</dd>
           <dt>Cert SAN</dt>    <dd class="mono">localhost (self-signed)</dd>
           <dt>Cert valid</dt>  <dd class="mono">{{m.CertNotBefore}} → {{m.CertNotAfter}}</dd>
           <dt>Fingerprint</dt> <dd class="mono" style="font-size:11.5px">
@@ -470,8 +473,8 @@ internal static class IndexPage
 
     private static string RenderAuthCard(IndexPageModel m)
     {
-        var tokenUrlLocal = $"http://localhost:{m.TokenPort}/token";
-        var tokenUrlFqdn  = $"http://{m.Fqdn}:{m.TokenPort}/token";
+        var tokenUrlLocal = NetInfo.HttpUrl("localhost", m.TokenPort, "/token");
+        var tokenUrlFqdn  = NetInfo.HttpUrl(m.Fqdn,      m.TokenPort, "/token");
         var portNote = m.TokenPort == 80 ? "(port 80 active)" : $"(port 80 unavailable — using {m.TokenPort})";
         return $$"""
 

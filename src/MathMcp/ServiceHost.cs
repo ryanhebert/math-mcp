@@ -72,6 +72,14 @@ public static class ServiceHost
             var requestLog = new RequestLog();
             builder.Services.AddSingleton(requestLog);
 
+            // Open CORS — this is a test server and the credentials are public
+            // on /. Browser-based OAuth/MCP clients need preflight to succeed.
+            builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+                .AllowAnyOrigin()
+                .AllowAnyMethod()
+                .AllowAnyHeader()
+                .WithExposedHeaders("WWW-Authenticate")));
+
             TokenStore? tokenStore = null;
             if (config.Auth?.Enabled == true)
             {
@@ -90,7 +98,7 @@ public static class ServiceHost
             // is reachable at the well-known well-formed URL clients expect for
             // OAuth flows. If something else holds it, skip silently and keep
             // the configured HTTP port as the primary.
-            var port80Available = TryProbeFreePort(80);
+            var port80Available = NetInfo.TryProbeFreePort(80);
             builder.WebHost.ConfigureKestrel(options =>
             {
                 options.Listen(IPAddress.Any, config.HttpPort);
@@ -108,6 +116,10 @@ public static class ServiceHost
                 config.HttpPort, config.HttpsPort,
                 port80Available ? "active" : "skipped (in use)",
                 config.Auth?.Enabled == true ? "enabled" : "disabled");
+
+            // CORS first so preflight responses get the right headers even on
+            // paths that have downstream auth or filtering.
+            app.UseCors();
 
             // Capture /mcp traffic into the in-memory ring buffer.
             app.UseWhen(
@@ -128,8 +140,9 @@ public static class ServiceHost
 
                 // Log non-POST attempts at Warning so the user can see them while
                 // debugging an OAuth client integration.
+                // OPTIONS deliberately omitted — CORS middleware handles preflight.
                 app.MapMethods("/token",
-                    new[] { "GET", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS" },
+                    new[] { "GET", "HEAD", "PUT", "DELETE", "PATCH" },
                     (HttpContext ctx) =>
                     {
                         tokenLogger.LogWarning(
@@ -140,13 +153,14 @@ public static class ServiceHost
                     });
             }
 
-            var fqdn = ResolveFqdn();
+            var fqdn = NetInfo.ResolveFqdn();
             var tokenPort = port80Available ? 80 : config.HttpPort;
 
             app.MapMcp("/mcp");
             MapInfoEndpoints(app, config, cert, requestLog, fqdn, tokenPort);
             MapLogsEndpoints(app);
             MapCertEndpoints(app, cert);
+            MapFavicon(app);
 
             app.Run();
             return 0;
@@ -232,8 +246,8 @@ public static class ServiceHost
                     tokenEndpoint = "/token",
                     tokenUrls = new
                     {
-                        localhost = $"http://localhost:{tokenPort}/token",
-                        fqdn      = $"http://{fqdn}:{tokenPort}/token",
+                        localhost = NetInfo.HttpUrl("localhost", tokenPort, "/token"),
+                        fqdn      = NetInfo.HttpUrl(fqdn, tokenPort, "/token"),
                     },
                     tokenTtlSeconds = config.Auth.TokenTtlSeconds,
                 }
@@ -289,6 +303,30 @@ public static class ServiceHost
         });
     }
 
+    private const string FaviconSvg = """
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7c5cff"/>
+      <stop offset="100%" stop-color="#4ad6ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#g)"/>
+  <text x="32" y="46" font-family="Arial,Helvetica,sans-serif" font-size="44" font-weight="700" text-anchor="middle" fill="#0b1020">∑</text>
+</svg>
+""";
+
+    private static void MapFavicon(WebApplication app)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(FaviconSvg);
+        app.MapGet("/favicon.svg", () => Results.File(bytes, "image/svg+xml"));
+        // Fallback: many browsers still request /favicon.ico — serve the SVG bytes
+        // anyway. The SVG MIME type makes modern browsers render it; older ones
+        // just see no favicon. Better than logging a 404 per visit.
+        app.MapGet("/favicon.ico", () => Results.File(bytes, "image/svg+xml"));
+    }
+
     private static void MapCertEndpoints(WebApplication app, X509Certificate2 cert)
     {
         var derBytes = cert.Export(X509ContentType.Cert);
@@ -316,38 +354,6 @@ public static class ServiceHost
             sb.Append(hex, i, 2);
         }
         return sb.ToString();
-    }
-
-    private static bool TryProbeFreePort(int port)
-    {
-        try
-        {
-            var probe = new TcpListener(IPAddress.Any, port);
-            probe.Start();
-            probe.Stop();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static string ResolveFqdn()
-    {
-        try
-        {
-            var props = IPGlobalProperties.GetIPGlobalProperties();
-            var host = string.IsNullOrEmpty(props.HostName) ? Environment.MachineName : props.HostName;
-            var domain = props.DomainName ?? "";
-            if (string.IsNullOrEmpty(domain)) return host;
-            if (host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase)) return host;
-            return $"{host}.{domain}";
-        }
-        catch
-        {
-            return Environment.MachineName;
-        }
     }
 
     private static LogEventLevel ParseSerilogLevel(string s) => s.ToLowerInvariant() switch

@@ -9,6 +9,7 @@ internal static class LogsPage
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Math MCP Server — Logs</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {
     --bg: #0b1020;
@@ -323,9 +324,11 @@ internal static class LogsPage
 
     <div class="footer-info">
       Path: <code>{{m.LogFilePath}}</code>
-      &middot; <a href="/info">JSON</a>
-      &middot; <a href="/health">Health</a>
-      &middot; <a href="/">Home</a>
+      &middot; <a href="/" target="_blank" rel="noopener">Home</a>
+      &middot; <a href="/info" target="_blank" rel="noopener">JSON</a>
+      &middot; <a href="/health" target="_blank" rel="noopener">Health</a>
+      &middot; <a href="https://github.com/ryanhebert/math-mcp" target="_blank" rel="noopener">GitHub ↗</a>
+      &middot; <a href="https://github.com/ryanhebert/math-mcp/releases" target="_blank" rel="noopener">Releases ↗</a>
     </div>
   </div>
 
