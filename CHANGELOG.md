@@ -2,6 +2,23 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.18] — 2026-05-12
+
+### Added
+- **Upgrade modal with live terminal output.** "Upgrade now" replaces the previous tiny banner status with a centered modal that opens a dark terminal pane. As the upgrade progresses, lines stream in:
+  - `$ MathMcp upgrade → v1.0.X`
+  - `accepted (HTTP 202)`
+  - `downloading binary…` with a live progress bar and bytes counter
+  - `✓ binary verified (PE header OK)`
+  - `spawning upgrade helper…`
+  - `service is offline — waiting for restart`
+  - `✓ service is back online`
+  - `✓ new version: v1.0.X+sha`
+  - `✓ upgrade complete`
+  - Failure paths show their reason inline (e.g. `✗ failed: downloaded file too small`).
+  Footer shows the current state pill (downloading / restarting / done / failed) and a "Close & reload" button enabled only when the upgrade finishes. The user closes when they're satisfied — there's no auto-dismiss.
+- **"Check for updates ↻" link** in the dashboard footer. Bypasses the 1-hour localStorage cache and queries GitHub's `releases/latest` API immediately. Inline result: `(v1.0.X available)` or `(up to date)`. Useful when you've just shipped a release and don't want to wait for the cache to expire.
+
 ## [v1.0.17] — 2026-05-12
 
 ### Changed
