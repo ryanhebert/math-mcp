@@ -129,11 +129,17 @@ public sealed class AuthMiddleware
 
 public static class TokenEndpoint
 {
-    public static Delegate Handle(AuthConfig config, TokenStore tokenStore) =>
+    public static Delegate Handle(AuthConfig config, TokenStore tokenStore, ILogger logger) =>
         async (HttpContext ctx) =>
         {
+            var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "-";
+            var contentType = ctx.Request.ContentType ?? "(none)";
+
             if (!ctx.Request.HasFormContentType)
             {
+                logger.LogWarning(
+                    "Token request rejected: bad content-type ip={Ip} content_type={ContentType} status=400 reason=invalid_request",
+                    ip, contentType);
                 return Results.Json(
                     new { error = "invalid_request", error_description = "expected application/x-www-form-urlencoded" },
                     statusCode: StatusCodes.Status400BadRequest);
@@ -143,9 +149,19 @@ public static class TokenEndpoint
             var grantType = form["grant_type"].ToString();
             var clientId = form["client_id"].ToString();
             var clientSecret = form["client_secret"].ToString();
+            var presentedSecret = string.IsNullOrEmpty(clientSecret) ? "(missing)" : $"(len={clientSecret.Length})";
+
+            logger.LogInformation(
+                "Token request received: ip={Ip} client_id={ClientId} grant_type={GrantType} secret={SecretPresent}",
+                ip, string.IsNullOrEmpty(clientId) ? "(missing)" : clientId,
+                string.IsNullOrEmpty(grantType) ? "(missing)" : grantType,
+                presentedSecret);
 
             if (grantType != "client_credentials")
             {
+                logger.LogWarning(
+                    "Token request rejected: ip={Ip} client_id={ClientId} grant_type={GrantType} status=400 reason=unsupported_grant_type",
+                    ip, clientId, grantType);
                 return Results.Json(
                     new { error = "unsupported_grant_type" },
                     statusCode: StatusCodes.Status400BadRequest);
@@ -160,6 +176,11 @@ public static class TokenEndpoint
 
             if (!idOk || !secretOk)
             {
+                var reason = !idOk && !secretOk ? "id+secret mismatch"
+                           : !idOk ? "client_id mismatch" : "client_secret mismatch";
+                logger.LogWarning(
+                    "Token request rejected: ip={Ip} client_id={ClientId} status=401 reason=invalid_client detail=\"{Detail}\"",
+                    ip, clientId, reason);
                 return Results.Json(
                     new { error = "invalid_client" },
                     statusCode: StatusCodes.Status401Unauthorized);
@@ -167,6 +188,10 @@ public static class TokenEndpoint
 
             var ttl = TimeSpan.FromSeconds(config.TokenTtlSeconds);
             var token = tokenStore.Issue(ttl);
+
+            logger.LogInformation(
+                "Token issued: ip={Ip} client_id={ClientId} status=200 expires_in={ExpiresIn}s",
+                ip, clientId, config.TokenTtlSeconds);
 
             return Results.Json(new
             {

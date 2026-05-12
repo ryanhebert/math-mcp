@@ -225,6 +225,39 @@ internal static class LogsPage
   .row.cont { background: transparent !important; padding-top: 0; padding-bottom: 0; border-left-color: transparent; }
   .row.cont .line { grid-template-columns: 1fr; padding-left: 120px; }
   .row.cont.ERR .line, .row.cont.FTL .line { color: var(--err); opacity: 0.85; }
+
+  /* Raw mode — minimal styling, literal file dump. */
+  .raw-pre {
+    margin: 0; padding: 14px 18px;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: inherit; font-size: 12.5px; line-height: 1.55;
+    color: var(--fg);
+  }
+  .raw-pre .lvl-inf { color: var(--accent-2); font-weight: 700; }
+  .raw-pre .lvl-dbg { color: var(--fg-muted); font-weight: 700; }
+  .raw-pre .lvl-wrn { color: var(--warn); font-weight: 700; }
+  .raw-pre .lvl-err, .raw-pre .lvl-ftl { color: var(--err); font-weight: 700; }
+  .raw-pre .ts { color: var(--fg-muted); }
+
+  /* Enhanced — key=value styling */
+  .kv {
+    display: inline-block;
+    padding: 0 6px; margin: 0 1px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+  }
+  .kv.status-ok   { color: var(--ok);   border-color: rgba(52,211,153,0.35);  background: rgba(52,211,153,0.10); }
+  .kv.status-warn { color: var(--warn); border-color: rgba(251,191,36,0.35);  background: rgba(251,191,36,0.10); }
+  .kv.status-err  { color: var(--err);  border-color: rgba(248,113,113,0.35); background: rgba(248,113,113,0.10); }
+  .kv.dim { color: var(--fg-muted); }
+
+  /* Disabled state for filter UI when Raw is active */
+  body.is-raw #filters,
+  body.is-raw #active-filters { opacity: 0.35; pointer-events: none; }
+  body.is-raw .filter-hint { display: inline; }
+  .filter-hint { display: none; font-size: 11px; color: var(--fg-muted); margin-left: 6px; }
   .footer-info {
     text-align: center; color: var(--fg-muted); font-size: 12px;
     margin-top: 14px;
@@ -266,6 +299,7 @@ internal static class LogsPage
           <button data-view="enhanced" class="on">Enhanced</button>
           <button data-view="raw">Raw</button>
         </div>
+        <span class="filter-hint">filters apply to Enhanced only</span>
         <div class="segmented" id="order-mode" title="Order">
           <button data-order="newest" class="on">Newest first</button>
           <button data-order="oldest">Oldest first</button>
@@ -307,6 +341,7 @@ internal static class LogsPage
   let pausedAuto = false;
   let lastRefreshTime = Date.now();
   let records = [];
+  let rawText = '';
 
   const logEl     = document.getElementById('log');
   const filtersEl = document.getElementById('filters');
@@ -397,15 +432,34 @@ internal static class LogsPage
   }
 
   // ===== Render =====
+  function statusKvClass(code) {
+    const n = parseInt(code, 10);
+    if (n >= 500) return 'status-err';
+    if (n >= 400) return 'status-warn';
+    return 'status-ok';
+  }
+
   function renderMsg(msg, host) {
-    // Highlight `host=X` substring as a clickable badge.
-    if (!host) return esc(msg);
-    const dotColor = colorFor(hostOnly(host));
-    const re = new RegExp(`(host=)(${host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`);
-    return esc(msg).replace(re, (full, p1, p2) => {
-      return `${p1}<span class="host-badge" data-host="${esc(host)}" title="Click to filter by this origin">` +
-             `<span class="dot" style="background:${dotColor}"></span>${esc(p2)}</span>`;
-    });
+    let html = esc(msg);
+    // status=NNN → colored chip
+    html = html.replace(/\b(status)=(\d{3})\b/g, (_, k, v) =>
+      `<span class="kv ${statusKvClass(v)}">${k}=${v}</span>`);
+    // dur=Xms or expires_in=Xs → dim chip
+    html = html.replace(/\b(dur|expires_in|content_type|grant_type|reason)=("[^"]*"|\S+)/g,
+      (_, k, v) => `<span class="kv dim">${k}=${v}</span>`);
+    // ip=… and client_id=… → neutral chip
+    html = html.replace(/\b(ip|client_id|method)=(\S+)/g,
+      (_, k, v) => `<span class="kv">${k}=${v}</span>`);
+    // host=… → clickable host badge with color dot (kept last so above regex doesn't grab it)
+    if (host) {
+      const dotColor = colorFor(hostOnly(host));
+      const safeHost = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(host=)(${safeHost})`);
+      html = html.replace(re, (_, p1, p2) =>
+        `<span class="host-badge" data-host="${esc(host)}" title="Click to filter by this origin">` +
+        `<span class="dot" style="background:${dotColor}"></span>${p1}${esc(p2)}</span>`);
+    }
+    return html;
   }
 
   function buildRow(rec) {
@@ -432,6 +486,44 @@ internal static class LogsPage
 
   function render() {
     const wasAtNewest = atNewestEdge();
+    if (viewMode === 'raw') {
+      renderRaw();
+    } else {
+      renderEnhanced();
+    }
+    renderActiveFilters();
+    if (wasAtNewest) snapToNewest();
+  }
+
+  function renderRaw() {
+    // True file dump — no filtering. Lines reordered if newest-first; otherwise
+    // exactly as on disk.
+    if (!rawText) {
+      logEl.innerHTML = '<div class="empty">Log file is empty.</div>';
+      mShown.textContent = '0';
+      mTotal.textContent = '0';
+      return;
+    }
+    const lines = rawText.split(/\r?\n/);
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    const ordered = orderMode === 'newest' ? [...lines].reverse() : lines;
+    // Build HTML: escape, tint level tokens, dim timestamps. No filters applied.
+    let html = ordered.map(esc).join('\n');
+    html = html.replace(/\[INF\]/g, '<span class="lvl-inf">[INF]</span>');
+    html = html.replace(/\[DBG\]/g, '<span class="lvl-dbg">[DBG]</span>');
+    html = html.replace(/\[VRB\]/g, '<span class="lvl-dbg">[VRB]</span>');
+    html = html.replace(/\[WRN\]/g, '<span class="lvl-wrn">[WRN]</span>');
+    html = html.replace(/\[ERR\]/g, '<span class="lvl-err">[ERR]</span>');
+    html = html.replace(/\[FTL\]/g, '<span class="lvl-ftl">[FTL]</span>');
+    html = html.replace(
+      /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+\-]\d{2}:\d{2})/gm,
+      '<span class="ts">$1</span>');
+    logEl.innerHTML = `<pre class="raw-pre">${html}</pre>`;
+    mShown.textContent = String(lines.length);
+    mTotal.textContent = String(lines.length);
+  }
+
+  function renderEnhanced() {
     const filtered = records.filter(visible);
     const ordered = orderMode === 'newest' ? [...filtered].reverse() : filtered;
     if (!ordered.length) {
@@ -443,9 +535,6 @@ internal static class LogsPage
     }
     mShown.textContent = String(filtered.length);
     mTotal.textContent = String(records.length);
-    renderActiveFilters();
-    // Position scroll
-    if (wasAtNewest) snapToNewest();
   }
 
   function atNewestEdge() {
@@ -521,6 +610,7 @@ internal static class LogsPage
     if (!btn) return;
     viewMode = btn.dataset.view;
     viewSel.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.view === viewMode));
+    document.body.classList.toggle('is-raw', viewMode === 'raw');
     render();
   });
   orderSel.addEventListener('click', e => {
@@ -566,6 +656,7 @@ internal static class LogsPage
       if (!res.ok) return;
       const text = await res.text();
       mSize.textContent = `${(text.length / 1024).toFixed(1)} KB`;
+      rawText = text;
       records = parseRecords(text);
       render();
       lastRefreshTime = Date.now();

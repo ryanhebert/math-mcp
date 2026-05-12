@@ -4,6 +4,7 @@ using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Protocol;
 using Serilog;
 using Serilog.Events;
 
@@ -79,7 +80,9 @@ public static class ServiceHost
 
             builder.Services.AddMcpServer()
                 .WithHttpTransport()
-                .WithToolsFromAssembly();
+                .WithToolsFromAssembly()
+                .WithPromptsFromAssembly()
+                .WithResourcesFromAssembly();
 
             builder.WebHost.ConfigureKestrel(options =>
             {
@@ -110,7 +113,22 @@ public static class ServiceHost
                     ctx => ctx.Request.Path.StartsWithSegments("/mcp"),
                     b => b.UseMiddleware<AuthMiddleware>());
 
-                app.MapPost("/token", TokenEndpoint.Handle(config.Auth, tokenStore));
+                var tokenLogger = app.Services.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("MathMcp.TokenEndpoint");
+                app.MapPost("/token", TokenEndpoint.Handle(config.Auth, tokenStore, tokenLogger));
+
+                // Log non-POST attempts at Warning so the user can see them while
+                // debugging an OAuth client integration.
+                app.MapMethods("/token",
+                    new[] { "GET", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS" },
+                    (HttpContext ctx) =>
+                    {
+                        tokenLogger.LogWarning(
+                            "Token endpoint received unsupported HTTP method: method={Method} ip={Ip} status=405",
+                            ctx.Request.Method, ctx.Connection.RemoteIpAddress);
+                        ctx.Response.Headers.Allow = "POST";
+                        return Results.StatusCode(StatusCodes.Status405MethodNotAllowed);
+                    });
             }
 
             app.MapMcp("/mcp");

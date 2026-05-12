@@ -13,7 +13,9 @@ Distributed as a single self-contained `MathMcp.exe`. No .NET runtime install re
 ## Install
 
 1. Download the version you want:
-    - **v1.0.6.1** *(latest)* — log viewer overhaul: Raw/Enhanced, newest-first, click-to-filter; per-request origin tracking
+    - **v1.0.7** *(latest)* — sample prompts and resources; OAuth `/token` activity now logged; Raw view is a true file dump; Enhanced log view renders `status=`/`dur=` as colored chips
+      <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.7/MathMcp-v1.0.7.exe>
+    - **v1.0.6.1** — log viewer overhaul: Raw/Enhanced, newest-first, click-to-filter; per-request origin tracking
       <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.6.1/MathMcp-v1.0.6.1.exe>
     - **v1.0.5** — mixed-mode auth: bearer, OAuth2, or anonymous; copy-button fix
       <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.5/MathMcp-v1.0.5.exe>
@@ -68,7 +70,11 @@ Example Claude Desktop / Claude Code config:
 }
 ```
 
-## Tools
+## Tools, prompts, resources
+
+The server exposes all three MCP primitives, useful for testing client coverage end-to-end.
+
+### Tools
 
 | Tool       | Signature              | Behavior                              |
 |------------|------------------------|---------------------------------------|
@@ -76,6 +82,21 @@ Example Claude Desktop / Claude Code config:
 | `subtract` | `subtract(a, b)`       | `a - b`                               |
 | `multiply` | `multiply(a, b)`       | `a * b`                               |
 | `divide`   | `divide(a, b)`         | `a / b`; errors if `b == 0`           |
+
+### Prompts
+
+| Name                | Arguments                  | Use                                                            |
+|---------------------|----------------------------|----------------------------------------------------------------|
+| `solve-expression`  | `expression: string`       | Step-by-step walkthrough using the math tools                  |
+| `compare-numbers`   | `a: number, b: number`     | Compute difference via `subtract`, explain which is larger     |
+
+### Resources
+
+| URI                 | MIME              | Content                                                        |
+|---------------------|-------------------|----------------------------------------------------------------|
+| `math://constants`  | `text/plain`      | π, e, φ, √2, √3, ln(2), γ                                      |
+| `math://identities` | `text/plain`      | Common algebraic, trigonometric, and famous identities         |
+| `math://primes`     | `text/plain`      | First 25 prime numbers                                         |
 
 ## Configuration
 

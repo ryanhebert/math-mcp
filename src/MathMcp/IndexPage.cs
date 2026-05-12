@@ -316,6 +316,17 @@ internal static class IndexPage
           <span class="tool">multiply(a, b)</span>
           <span class="tool">divide(a, b)</span>
         </div>
+        <h2 style="margin-top:16px">Prompts</h2>
+        <div class="tools">
+          <span class="tool">solve-expression(expression)</span>
+          <span class="tool">compare-numbers(a, b)</span>
+        </div>
+        <h2 style="margin-top:16px">Resources</h2>
+        <div class="tools">
+          <span class="tool">math://constants</span>
+          <span class="tool">math://identities</span>
+          <span class="tool">math://primes</span>
+        </div>
       </div>
     </div>
 
