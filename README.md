@@ -13,10 +13,8 @@ Distributed as a single self-contained `MathMcp.exe`. No .NET runtime install re
 ## Install
 
 1. Download the version you want:
-    - **v1.0.6.1** *(latest)* — patch: log viewer parser handles CRLF line endings (v1.0.6 showed 0 records on Windows). Same features as v1.0.6 otherwise.
+    - **v1.0.6.1** *(latest)* — log viewer overhaul: Raw/Enhanced, newest-first, click-to-filter; per-request origin tracking
       <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.6.1/MathMcp-v1.0.6.1.exe>
-    - **v1.0.6** — log viewer overhaul: Raw/Enhanced, newest-first, click-to-filter; per-request origin tracking *(superseded by v1.0.6.1 — CRLF parsing bug)*
-      <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.6/MathMcp-v1.0.6.exe>
     - **v1.0.5** — mixed-mode auth: bearer, OAuth2, or anonymous; copy-button fix
       <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.5/MathMcp-v1.0.5.exe>
     - **v1.0.4** — adds `--auth`, `/logs`, recent-requests panel, cert download
