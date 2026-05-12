@@ -127,13 +127,15 @@ public static class ServiceHost
                 {
                     if (context.Connection.LocalPort == 80 &&
                         !context.Request.Path.StartsWithSegments("/token") &&
+                        !context.Request.Path.StartsWithSegments("/.well-known") &&
                         !context.Request.Path.StartsWithSegments("/favicon"))
                     {
                         context.Response.StatusCode = StatusCodes.Status404NotFound;
                         context.Response.ContentType = "text/plain; charset=utf-8";
                         await context.Response.WriteAsync(
-                            "Port 80 on this server is reserved for the OAuth /token endpoint. " +
-                            $"Other endpoints are available on http://<host>:{config.HttpPort}/ (HTTP) " +
+                            "Port 80 on this server is reserved for the OAuth /token endpoint " +
+                            "and OAuth discovery (/.well-known/...). Other endpoints are available " +
+                            $"on http://<host>:{config.HttpPort}/ (HTTP) " +
                             $"and https://<host>:{config.HttpsPort}/ (HTTPS).");
                         return;
                     }
@@ -175,19 +177,72 @@ public static class ServiceHost
                     .CreateLogger("MathMcp.TokenEndpoint");
                 app.MapPost("/token", TokenEndpoint.Handle(config.Auth, tokenStore, tokenLogger));
 
-                // Log non-POST attempts at Warning so the user can see them while
-                // debugging an OAuth client integration.
-                // OPTIONS deliberately omitted — CORS middleware handles preflight.
+                // GET /token returns a helpful JSON describing how to use the
+                // endpoint and pointing at the discovery metadata. OAuth probes
+                // sometimes sniff with GET before POST.
+                app.MapGet("/token", (HttpContext ctx) =>
+                {
+                    var origin = $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}";
+                    tokenLogger.LogInformation(
+                        "Token endpoint GET probe: ip={Ip} status=200 (returning usage hint)",
+                        ctx.Connection.RemoteIpAddress);
+                    return Results.Json(new
+                    {
+                        endpoint = "/token",
+                        supported_methods = new[] { "POST" },
+                        supported_grant_types = new[] { "client_credentials" },
+                        token_endpoint_auth_methods_supported = new[] { "client_secret_post" },
+                        discovery = $"{origin}/.well-known/oauth-authorization-server",
+                        usage = "POST application/x-www-form-urlencoded with grant_type=client_credentials, client_id, client_secret",
+                    });
+                });
+
+                // Other non-POST methods → 405 (HEAD/PUT/DELETE/PATCH). OPTIONS
+                // is handled by the CORS middleware for preflight.
                 app.MapMethods("/token",
-                    new[] { "GET", "HEAD", "PUT", "DELETE", "PATCH" },
+                    new[] { "HEAD", "PUT", "DELETE", "PATCH" },
                     (HttpContext ctx) =>
                     {
                         tokenLogger.LogWarning(
                             "Token endpoint received unsupported HTTP method: method={Method} ip={Ip} status=405",
                             ctx.Request.Method, ctx.Connection.RemoteIpAddress);
-                        ctx.Response.Headers.Allow = "POST";
+                        ctx.Response.Headers.Allow = "POST, GET";
                         return Results.StatusCode(StatusCodes.Status405MethodNotAllowed);
                     });
+
+                // OAuth 2.0 Authorization Server Metadata (RFC 8414) + OIDC alias.
+                // The probe expects this so it can discover the token endpoint
+                // without guessing.
+                Func<HttpContext, IResult> metadataHandler = ctx =>
+                {
+                    var origin = $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}";
+                    return Results.Json(new
+                    {
+                        issuer = origin,
+                        token_endpoint = $"{origin}/token",
+                        grant_types_supported = new[] { "client_credentials" },
+                        token_endpoint_auth_methods_supported = new[] { "client_secret_post" },
+                        response_types_supported = Array.Empty<string>(),
+                        scopes_supported = Array.Empty<string>(),
+                    });
+                };
+                app.MapGet("/.well-known/oauth-authorization-server", metadataHandler);
+                app.MapGet("/.well-known/openid-configuration", metadataHandler);
+
+                // OAuth Protected Resource Metadata (RFC 9728) — tells clients
+                // that /mcp is the resource and this same origin is the
+                // authorization server.
+                app.MapGet("/.well-known/oauth-protected-resource", (HttpContext ctx) =>
+                {
+                    var origin = $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}";
+                    return Results.Json(new
+                    {
+                        resource = $"{origin}/mcp",
+                        authorization_servers = new[] { origin },
+                        bearer_methods_supported = new[] { "header" },
+                        resource_documentation = $"{origin}/info",
+                    });
+                });
             }
 
             var fqdn = NetInfo.ResolveFqdn();

@@ -309,6 +309,8 @@ internal static class IndexPage
         <a class="endpoint" href="/logs"><span class="method">GET</span>/logs<span class="desc">live log viewer (HTML)</span></a>
         <a class="endpoint" href="/health"><span class="method">GET</span>/health<span class="desc">health probe</span></a>
         {{tokenEndpoint}}
+        {{(m.AuthEnabled ? "<a class=\"endpoint\" href=\"/.well-known/oauth-authorization-server\"><span class=\"method\">GET</span>/.well-known/oauth-authorization-server<span class=\"desc\">OAuth 2.0 server metadata (RFC 8414)</span></a>" : "")}}
+        {{(m.AuthEnabled ? "<a class=\"endpoint\" href=\"/.well-known/oauth-protected-resource\"><span class=\"method\">GET</span>/.well-known/oauth-protected-resource<span class=\"desc\">OAuth protected resource metadata (RFC 9728)</span></a>" : "")}}
         <span class="endpoint"><span class="method">POST</span>/mcp<span class="desc">MCP Streamable HTTP transport{{(m.AuthEnabled ? " (auth optional — bearer, OAuth2, or anonymous)" : "")}}</span></span>
       </div>
 

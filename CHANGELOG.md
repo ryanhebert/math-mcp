@@ -2,6 +2,18 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.11] — 2026-05-12
+
+### Added
+- **OAuth 2.0 Authorization Server Metadata discovery** (RFC 8414) at `/.well-known/oauth-authorization-server`, with an OIDC-compatible alias at `/.well-known/openid-configuration`. Probes that look up discovery before posting to the token endpoint now get a proper JSON document describing supported grants, the token endpoint URL, and auth methods.
+- **OAuth Protected Resource Metadata** (RFC 9728) at `/.well-known/oauth-protected-resource`. Tells clients that `/mcp` is the protected resource and points at this same origin as its authorization server.
+- **`GET /token` now returns a 200 JSON usage hint** instead of 405. Includes the discovery URL, supported grants, and a usage description. OAuth probes that sniff with GET before POST will see something useful.
+- Port 80 filter now permits `/.well-known/...` paths through so discovery works on port 80 when bound.
+- Dashboard "Endpoints" card lists the two discovery URLs when auth is enabled.
+
+### Why
+A probe was hitting `GET /token` and getting 405. The standard way for clients to find the token endpoint is the well-known metadata document, which we weren't serving. Adding the discovery endpoints is the standards-compliant fix; the GET `/token` change is a pragmatic helper for probes that sniff first.
+
 ## [v1.0.10] — 2026-05-12
 
 ### Fixed
