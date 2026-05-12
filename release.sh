@@ -18,7 +18,6 @@ if [[ "${1:-}" == "--dry-run" ]]; then DRY_RUN=1; fi
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 CSPROJ="$ROOT/src/MathMcp/MathMcp.csproj"
 PUBLISH_DIR="$ROOT/src/MathMcp/bin/Release/net8.0/win-x64/publish"
-ARTIFACT="$ROOT/MathMcp.exe"
 
 VERSION="$(grep -oP '(?<=<Version>)[^<]+' "$CSPROJ" | head -1)"
 if [[ -z "$VERSION" ]]; then
@@ -26,6 +25,7 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 TAG="v$VERSION"
+ARTIFACT="$ROOT/MathMcp-$TAG.exe"
 
 echo "==> Math MCP Server release $TAG"
 

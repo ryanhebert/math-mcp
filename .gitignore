@@ -12,3 +12,4 @@ logs/
 
 # Built artifacts: distributed via GitHub Releases, not git.
 /MathMcp.exe
+/MathMcp-v*.exe
