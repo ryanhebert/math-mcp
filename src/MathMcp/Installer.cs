@@ -196,27 +196,37 @@ public static class Installer
 
         var port80Free = NetInfo.TryProbeFreePort(80);
         var fqdn = NetInfo.ResolveFqdn();
-        var displayHttpPort = port80Free ? 80 : config.HttpPort;
 
         Console.WriteLine();
         Console.WriteLine($"Math MCP Server installed and running.");
-        Console.WriteLine($"  Info:    {NetInfo.HttpUrl("localhost", displayHttpPort, "/")}");
-        Console.WriteLine($"  MCP:     {NetInfo.HttpUrl("localhost", displayHttpPort, "/mcp")}");
+        Console.WriteLine($"  Info:    {NetInfo.HttpUrl("localhost", config.HttpPort, "/")}");
+        Console.WriteLine($"  MCP:     {NetInfo.HttpUrl("localhost", config.HttpPort, "/mcp")}");
         Console.WriteLine($"  HTTPS:   {NetInfo.HttpsUrl("localhost", config.HttpsPort, "/mcp")}");
         if (targetAuthEnabled)
         {
-            Console.WriteLine($"  Token:   {NetInfo.HttpUrl("localhost", displayHttpPort, "/token")}");
+            Console.WriteLine($"  Token:   {NetInfo.HttpUrl("localhost", config.HttpPort, "/token")}");
         }
-        Console.WriteLine($"  FQDN:    {fqdn}  (port 80 {(port80Free ? "available" : "in use — falling back to " + config.HttpPort)})");
+        Console.WriteLine($"  FQDN:    {fqdn}");
+        if (targetAuthEnabled)
+        {
+            if (port80Free)
+            {
+                Console.WriteLine($"  Port 80: available — /token will ALSO be reachable at http://localhost/token");
+            }
+            else
+            {
+                Console.WriteLine($"  Port 80: in use by another process — /token only on port {config.HttpPort}");
+            }
+        }
 
         if (freshCreds && config.Auth is not null)
         {
-            PrintCredentialsBanner(config.Auth, displayHttpPort, fqdn);
+            PrintCredentialsBanner(config.Auth, config.HttpPort, fqdn);
         }
         else if (targetAuthEnabled)
         {
             Console.WriteLine();
-            Console.WriteLine($"  Auth:    enabled (view creds at {NetInfo.HttpUrl("localhost", displayHttpPort, "/")})");
+            Console.WriteLine($"  Auth:    enabled (view creds at {NetInfo.HttpUrl("localhost", config.HttpPort, "/")})");
         }
         return 0;
     }
@@ -239,9 +249,10 @@ public static class Installer
         };
     }
 
-    private static void PrintCredentialsBanner(AuthConfig auth, int displayHttpPort, string fqdn)
+    private static void PrintCredentialsBanner(AuthConfig auth, int httpPort, string fqdn)
     {
         var bar = new string('=', 64);
+        var port80Free = NetInfo.TryProbeFreePort(80);
         Console.WriteLine();
         Console.WriteLine(bar);
         Console.WriteLine("  AUTH ENABLED — test credentials (save these now)");
@@ -252,10 +263,16 @@ public static class Installer
         Console.WriteLine("  OAuth2 client credentials:");
         Console.WriteLine($"    client_id     : {auth.ClientId}");
         Console.WriteLine($"    client_secret : {auth.ClientSecret}");
-        Console.WriteLine($"    token URL     : {NetInfo.HttpUrl("localhost", displayHttpPort, "/token")}");
-        Console.WriteLine($"                    {NetInfo.HttpUrl(fqdn,        displayHttpPort, "/token")}");
+        Console.WriteLine($"    token URL     : {NetInfo.HttpUrl("localhost", httpPort, "/token")}");
+        Console.WriteLine($"                    {NetInfo.HttpUrl(fqdn,        httpPort, "/token")}");
+        if (port80Free)
+        {
+            Console.WriteLine("                    (also at port 80:)");
+            Console.WriteLine($"                    {NetInfo.HttpUrl("localhost", 80, "/token")}");
+            Console.WriteLine($"                    {NetInfo.HttpUrl(fqdn,        80, "/token")}");
+        }
         Console.WriteLine();
-        Console.WriteLine($"  Visit {NetInfo.HttpUrl("localhost", displayHttpPort, "/")} to view again any time.");
+        Console.WriteLine($"  Visit {NetInfo.HttpUrl("localhost", httpPort, "/")} to view again any time.");
         Console.WriteLine(bar);
     }
 
@@ -305,10 +322,8 @@ public static class Installer
             }
         }
 
-        var port80Free = NetInfo.TryProbeFreePort(80);
-        var displayHttpPort = port80Free ? 80 : config.HttpPort;
         var fqdn = NetInfo.ResolveFqdn();
-        PrintCredentialsBanner(config.Auth, displayHttpPort, fqdn);
+        PrintCredentialsBanner(config.Auth, config.HttpPort, fqdn);
         return 0;
     }
 

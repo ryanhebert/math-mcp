@@ -94,10 +94,11 @@ public static class ServiceHost
                 .WithPromptsFromAssembly()
                 .WithResourcesFromAssembly();
 
-            // Try to also bind port 80 so /token (and the rest of the surface)
-            // is reachable at the well-known well-formed URL clients expect for
-            // OAuth flows. If something else holds it, skip silently and keep
-            // the configured HTTP port as the primary.
+            // Try to bind port 80 so the OAuth /token endpoint is reachable
+            // at the well-known port clients expect. Port 80 is *only* used
+            // for /token — the main MCP surface, dashboard, logs, cert
+            // downloads, etc. all stay on the configured HTTP/HTTPS ports.
+            // See the port-80 filter middleware below for the enforcement.
             var port80Available = NetInfo.TryProbeFreePort(80);
             builder.WebHost.ConfigureKestrel(options =>
             {
@@ -117,9 +118,45 @@ public static class ServiceHost
                 port80Available ? "active" : "skipped (in use)",
                 config.Auth?.Enabled == true ? "enabled" : "disabled");
 
-            // CORS first so preflight responses get the right headers even on
-            // paths that have downstream auth or filtering.
+            // Port 80 (if bound) is reserved exclusively for the OAuth /token
+            // endpoint. Other paths return 404 there. The main MCP surface,
+            // dashboard, logs, etc. stay on the configured HTTP/HTTPS ports.
+            if (port80Available)
+            {
+                app.Use(async (context, next) =>
+                {
+                    if (context.Connection.LocalPort == 80 &&
+                        !context.Request.Path.StartsWithSegments("/token") &&
+                        !context.Request.Path.StartsWithSegments("/favicon"))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status404NotFound;
+                        context.Response.ContentType = "text/plain; charset=utf-8";
+                        await context.Response.WriteAsync(
+                            "Port 80 on this server is reserved for the OAuth /token endpoint. " +
+                            $"Other endpoints are available on http://<host>:{config.HttpPort}/ (HTTP) " +
+                            $"and https://<host>:{config.HttpsPort}/ (HTTPS).");
+                        return;
+                    }
+                    await next();
+                });
+            }
+
+            // CORS so browser-based OAuth/MCP clients can complete preflight.
             app.UseCors();
+
+            // Cache-Control no-store on the dashboard data endpoints so
+            // browsers always pull fresh values (otherwise a tab left open
+            // across an upgrade keeps showing stale info).
+            app.Use(async (ctx, next) =>
+            {
+                var p = ctx.Request.Path.Value ?? "";
+                if (p == "/" || p.StartsWith("/info") || p.StartsWith("/health") ||
+                    p.StartsWith("/requests") || p.StartsWith("/logs"))
+                {
+                    ctx.Response.Headers.CacheControl = "no-store";
+                }
+                await next();
+            });
 
             // Capture /mcp traffic into the in-memory ring buffer.
             app.UseWhen(

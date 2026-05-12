@@ -2,6 +2,19 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.10] — 2026-05-12
+
+### Fixed
+- **Install banner no longer replaces the configured HTTP port (e.g. `52080`) with `80` in displayed URLs.** v1.0.9 mistakenly swapped the port when port 80 was free, so the install summary lost the `:52080` reference entirely. Now the configured ports are always shown for Info/MCP/HTTPS/Token, and the port-80 case is reported as a separate informational line.
+
+### Changed
+- **Port 80 is reserved exclusively for the OAuth `/token` endpoint.** When the service binds port 80, every other path on that port returns `404` with an explanatory body pointing at the configured HTTP/HTTPS ports. The MCP surface, dashboard, logs, and cert downloads stay on `52080`/`52443` only.
+- Listening card on the dashboard splits HTTP port (always shown) from Port 80 status (`active — /token only` or `not bound (in use)`).
+- Credentials banner adds the port-80 token URLs (when port 80 is bound) below the configured-port URLs, clearly labeled.
+
+### Added
+- **`Cache-Control: no-store` on dashboard data endpoints** (`/`, `/info`, `/health`, `/requests`, `/logs`, `/logs/tail`) so a tab left open across an upgrade fetches fresh values instead of showing stale info.
+
 ## [v1.0.9] — 2026-05-12
 
 ### Added

@@ -261,8 +261,9 @@ internal static class IndexPage
       <div class="card">
         <h2>Listening</h2>
         <dl>
-          <dt>HTTP port</dt>   <dd class="mono">{{m.HttpPort}}{{(m.TokenPort == 80 ? " + 80 (active)" : "")}}</dd>
+          <dt>HTTP port</dt>   <dd class="mono">{{m.HttpPort}}</dd>
           <dt>HTTPS port</dt>  <dd class="mono">{{m.HttpsPort}}</dd>
+          <dt>Port 80</dt>     <dd class="mono">{{(m.TokenPort == 80 ? "active — /token only" : "not bound (in use)")}}</dd>
           {{(m.AuthEnabled ? $"<dt>Token URL</dt>   <dd class=\"mono\" style=\"word-break:break-all\">{NetInfo.HttpUrl("localhost", m.TokenPort, "/token")}</dd>" : "")}}
           <dt>Bind</dt>        <dd class="mono">0.0.0.0 (all interfaces)</dd>
           <dt>FQDN</dt>        <dd class="mono">{{m.Fqdn}}</dd>
