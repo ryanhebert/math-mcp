@@ -75,9 +75,21 @@ public sealed class AuthMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var header = context.Request.Headers.Authorization.ToString();
+
+        // Anonymous requests are allowed even when auth is "enabled": the flag
+        // surfaces test credentials and the /token endpoint for integrators to
+        // exercise the flows, but does not enforce auth. All three modes
+        // — static bearer, OAuth2-issued bearer, or no header — pass through.
+        if (string.IsNullOrWhiteSpace(header))
+        {
+            _logger.LogDebug("Token check on /mcp → allow (anonymous)");
+            await _next(context);
+            return;
+        }
+
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
-            await WriteUnauthorized(context, "missing or malformed Authorization header");
+            await WriteUnauthorized(context, "malformed Authorization header");
             return;
         }
 

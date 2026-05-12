@@ -290,7 +290,7 @@ internal static class IndexPage
         <a class="endpoint" href="/logs"><span class="method">GET</span>/logs<span class="desc">live log viewer (HTML)</span></a>
         <a class="endpoint" href="/health"><span class="method">GET</span>/health<span class="desc">health probe</span></a>
         {{tokenEndpoint}}
-        <span class="endpoint"><span class="method">POST</span>/mcp<span class="desc">MCP Streamable HTTP transport{{(m.AuthEnabled ? " (auth required)" : "")}}</span></span>
+        <span class="endpoint"><span class="method">POST</span>/mcp<span class="desc">MCP Streamable HTTP transport{{(m.AuthEnabled ? " (auth optional — bearer, OAuth2, or anonymous)" : "")}}</span></span>
       </div>
 
       <div class="card" style="grid-column: 1 / -1">
@@ -333,17 +333,37 @@ internal static class IndexPage
     setInterval(tick, 1000);
   })();
 
+  async function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; }
+      catch (_) { /* fall through */ }
+    }
+    // Fallback for http:// on non-localhost where Clipboard API is unavailable.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '0'; ta.style.left = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
   document.querySelectorAll('.copy-btn[data-copy]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const target = document.getElementById(btn.dataset.copy);
       if (!target) return;
       const text = target.innerText.trim();
-      navigator.clipboard.writeText(text).then(() => {
-        const orig = btn.textContent;
-        btn.textContent = 'Copied';
-        btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
-      });
+      const orig = btn.textContent;
+      const ok = await copyToClipboard(text);
+      btn.textContent = ok ? 'Copied' : 'Failed';
+      btn.classList.toggle('copied', ok);
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
     });
   });
 
@@ -403,8 +423,10 @@ internal static class IndexPage
       <div class="card auth-card" style="grid-column: 1 / -1">
         <h2>Test credentials</h2>
         <div class="auth-banner">
-          <strong>Auth enabled</strong> — these credentials are shown for testing
-          and accept requests against <code>/mcp</code>. Either method works.
+          <strong>Auth enabled (mixed mode)</strong> — <code>/mcp</code> accepts
+          the static bearer token, an OAuth2-issued bearer token, <em>or</em>
+          no auth at all. Useful for testing all three client flows against
+          one server.
         </div>
 
         <div class="cred-group">

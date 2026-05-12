@@ -47,7 +47,7 @@ If a previous install is stuck "marked for deletion" (typically because `service
 | `/cert.cer`    | GET      | TLS cert in DER format                                                  |
 | `/cert.pem`    | GET      | TLS cert in PEM format                                                  |
 | `/token`       | POST     | OAuth2 client_credentials → bearer token (only when auth is enabled)    |
-| `/mcp`         | POST/SSE | MCP Streamable HTTP transport (auth required when enabled)              |
+| `/mcp`         | POST/SSE | MCP Streamable HTTP transport (auth optional in mixed mode)             |
 
 All endpoints are served on both `http://<host>:52080` and `https://<host>:52443`.
 
@@ -86,7 +86,7 @@ Defaults are written to `C:\Program Files\MathMcp\config.json`:
 
 Edit and restart the service to apply (`sc stop MathMcp && sc start MathMcp`). Re-running the installer preserves your edits.
 
-## Authentication (optional)
+## Authentication (optional, mixed-mode)
 
 Auth is **off by default**. To enable it, install with the `--auth` flag:
 
@@ -101,9 +101,14 @@ This generates and prints three values, *once*:
 
 You can view them at any time on `http://<host>:52080/`. They are also returned by `GET /info`. **These credentials are intentionally not secret** — this server is a testing target, and the values are published on the public index page so integrators can copy them out.
 
-Both methods work against `/mcp`:
+`--auth` enables **mixed mode**: `/mcp` accepts the static bearer token, an OAuth2-issued bearer token, *or* no `Authorization` header at all. The point of the flag is to surface working test credentials and the `/token` endpoint so integrators can exercise all three client flows against the same server — not to enforce auth. (Present-but-invalid bearer tokens still return `401` so rejection paths can be tested.)
+
+All three of these work against `/mcp`:
 
 ```bash
+# No auth — works in mixed mode
+curl http://host:52080/mcp -d '...'
+
 # Static bearer
 curl -H "Authorization: Bearer mm_st_..." http://host:52080/mcp -d '...'
 
