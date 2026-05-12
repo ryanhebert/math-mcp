@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
@@ -84,11 +86,17 @@ public static class ServiceHost
                 .WithPromptsFromAssembly()
                 .WithResourcesFromAssembly();
 
+            // Try to also bind port 80 so /token (and the rest of the surface)
+            // is reachable at the well-known well-formed URL clients expect for
+            // OAuth flows. If something else holds it, skip silently and keep
+            // the configured HTTP port as the primary.
+            var port80Available = TryProbeFreePort(80);
             builder.WebHost.ConfigureKestrel(options =>
             {
                 options.Listen(IPAddress.Any, config.HttpPort);
                 options.Listen(IPAddress.Any, config.HttpsPort, listen =>
                     listen.UseHttps(cert));
+                if (port80Available) options.Listen(IPAddress.Any, 80);
             });
 
             var app = builder.Build();
@@ -96,8 +104,9 @@ public static class ServiceHost
             var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
                 .CreateLogger("MathMcp");
             startupLogger.LogInformation(
-                "Math MCP Server starting. HTTP port {Http}, HTTPS port {Https}. Auth {AuthState}.",
+                "Math MCP Server starting. HTTP port {Http}, HTTPS port {Https}, port 80 {Port80}. Auth {AuthState}.",
                 config.HttpPort, config.HttpsPort,
+                port80Available ? "active" : "skipped (in use)",
                 config.Auth?.Enabled == true ? "enabled" : "disabled");
 
             // Capture /mcp traffic into the in-memory ring buffer.
@@ -131,8 +140,11 @@ public static class ServiceHost
                     });
             }
 
+            var fqdn = ResolveFqdn();
+            var tokenPort = port80Available ? 80 : config.HttpPort;
+
             app.MapMcp("/mcp");
-            MapInfoEndpoints(app, config, cert, requestLog);
+            MapInfoEndpoints(app, config, cert, requestLog, fqdn, tokenPort);
             MapLogsEndpoints(app);
             MapCertEndpoints(app, cert);
 
@@ -153,7 +165,8 @@ public static class ServiceHost
     private static readonly DateTime StartedAtUtc = DateTime.UtcNow;
 
     private static void MapInfoEndpoints(
-        WebApplication app, Config config, X509Certificate2 cert, RequestLog requestLog)
+        WebApplication app, Config config, X509Certificate2 cert, RequestLog requestLog,
+        string fqdn, int tokenPort)
     {
         var version = Assembly.GetExecutingAssembly()
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
@@ -180,6 +193,8 @@ public static class ServiceHost
                 ClientId:     config.Auth?.ClientId,
                 ClientSecret: config.Auth?.ClientSecret,
                 TokenTtlSeconds: config.Auth?.TokenTtlSeconds ?? 3600,
+                TokenPort: tokenPort,
+                Fqdn: fqdn,
                 CertFingerprint: fingerprint,
                 CertNotBefore: certNotBefore,
                 CertNotAfter: certNotAfter,
@@ -194,7 +209,8 @@ public static class ServiceHost
             status = "running",
             startedAt = StartedAtUtc.ToString("O"),
             uptimeSeconds = (long)(DateTime.UtcNow - StartedAtUtc).TotalSeconds,
-            ports = new { http = config.HttpPort, https = config.HttpsPort },
+            ports = new { http = config.HttpPort, https = config.HttpsPort, tokenPort },
+            host = new { machine = Environment.MachineName, fqdn },
             mcpEndpoint = "/mcp",
             tools,
             machineName = Environment.MachineName,
@@ -214,6 +230,11 @@ public static class ServiceHost
                     clientId = config.Auth.ClientId,
                     clientSecret = config.Auth.ClientSecret,
                     tokenEndpoint = "/token",
+                    tokenUrls = new
+                    {
+                        localhost = $"http://localhost:{tokenPort}/token",
+                        fqdn      = $"http://{fqdn}:{tokenPort}/token",
+                    },
                     tokenTtlSeconds = config.Auth.TokenTtlSeconds,
                 }
                 : (object)new { enabled = false },
@@ -295,6 +316,38 @@ public static class ServiceHost
             sb.Append(hex, i, 2);
         }
         return sb.ToString();
+    }
+
+    private static bool TryProbeFreePort(int port)
+    {
+        try
+        {
+            var probe = new TcpListener(IPAddress.Any, port);
+            probe.Start();
+            probe.Stop();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ResolveFqdn()
+    {
+        try
+        {
+            var props = IPGlobalProperties.GetIPGlobalProperties();
+            var host = string.IsNullOrEmpty(props.HostName) ? Environment.MachineName : props.HostName;
+            var domain = props.DomainName ?? "";
+            if (string.IsNullOrEmpty(domain)) return host;
+            if (host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase)) return host;
+            return $"{host}.{domain}";
+        }
+        catch
+        {
+            return Environment.MachineName;
+        }
     }
 
     private static LogEventLevel ParseSerilogLevel(string s) => s.ToLowerInvariant() switch

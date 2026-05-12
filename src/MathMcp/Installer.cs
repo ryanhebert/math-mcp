@@ -523,21 +523,28 @@ public static class Installer
 
     private const string FwRuleHttp = "MathMcp HTTP";
     private const string FwRuleHttps = "MathMcp HTTPS";
+    private const string FwRuleHttp80 = "MathMcp HTTP 80";
 
     private static void ConfigureFirewall(int httpPort, int httpsPort)
     {
         // Idempotent: delete any existing rules with our names, then add fresh ones.
         DeleteFirewallRule(FwRuleHttp);
         DeleteFirewallRule(FwRuleHttps);
+        DeleteFirewallRule(FwRuleHttp80);
 
         AddFirewallRule(FwRuleHttp, httpPort);
         AddFirewallRule(FwRuleHttps, httpsPort);
+        // Port 80 is opportunistically used for the /token endpoint when free.
+        // Rule is always added so external probes can reach it whenever
+        // Kestrel manages to bind it.
+        AddFirewallRule(FwRuleHttp80, 80);
     }
 
     private static void RemoveFirewall()
     {
         DeleteFirewallRule(FwRuleHttp);
         DeleteFirewallRule(FwRuleHttps);
+        DeleteFirewallRule(FwRuleHttp80);
     }
 
     private static void AddFirewallRule(string name, int port)

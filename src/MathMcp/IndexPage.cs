@@ -331,7 +331,12 @@ internal static class IndexPage
     </div>
 
     <footer>
-      Math MCP Server &middot; <a href="/info">JSON</a> &middot; <a href="/logs">Logs</a> &middot; <a href="/health">Health</a>
+      Math MCP Server v{{m.Version}} &middot;
+      <a href="/info" target="_blank" rel="noopener">JSON</a> &middot;
+      <a href="/logs" target="_blank" rel="noopener">Logs</a> &middot;
+      <a href="/health" target="_blank" rel="noopener">Health</a> &middot;
+      <a href="https://github.com/ryanhebert/math-mcp" target="_blank" rel="noopener">GitHub ↗</a> &middot;
+      <a href="https://github.com/ryanhebert/math-mcp/releases" target="_blank" rel="noopener">Releases ↗</a>
     </footer>
   </div>
 
@@ -465,7 +470,9 @@ internal static class IndexPage
 
     private static string RenderAuthCard(IndexPageModel m)
     {
-        var tokenUrl = $"http://localhost:{m.HttpPort}/token";
+        var tokenUrlLocal = $"http://localhost:{m.TokenPort}/token";
+        var tokenUrlFqdn  = $"http://{m.Fqdn}:{m.TokenPort}/token";
+        var portNote = m.TokenPort == 80 ? "(port 80 active)" : $"(port 80 unavailable — using {m.TokenPort})";
         return $$"""
 
       <div class="card auth-card" style="grid-column: 1 / -1">
@@ -499,9 +506,19 @@ internal static class IndexPage
             <button class="copy-btn" data-copy="v-cs">Copy</button>
           </div>
           <div class="cred">
-            <span class="cred-label">token URL</span>
-            <span class="cred-value" id="v-turl">POST {{tokenUrl}}</span>
-            <button class="copy-btn" data-copy="v-turl">Copy</button>
+            <span class="cred-label">token URL (local)</span>
+            <span class="cred-value" id="v-turl-local">POST {{tokenUrlLocal}}</span>
+            <button class="copy-btn" data-copy="v-turl-local">Copy</button>
+          </div>
+          <div class="cred">
+            <span class="cred-label">token URL (fqdn)</span>
+            <span class="cred-value" id="v-turl-fqdn">POST {{tokenUrlFqdn}}</span>
+            <button class="copy-btn" data-copy="v-turl-fqdn">Copy</button>
+          </div>
+          <div class="cred">
+            <span class="cred-label">token port</span>
+            <span class="cred-value" style="color:var(--fg-muted)">{{portNote}}</span>
+            <span></span>
           </div>
           <div class="cred">
             <span class="cred-label">token TTL</span>
@@ -526,6 +543,8 @@ internal sealed record IndexPageModel(
     string? ClientId,
     string? ClientSecret,
     int TokenTtlSeconds,
+    int TokenPort,
+    string Fqdn,
     string CertFingerprint,
     string CertNotBefore,
     string CertNotAfter,
