@@ -2,6 +2,26 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.12] — 2026-05-12
+
+### Logs page overhaul
+
+**New tooling:**
+- **Search box** — case-insensitive substring filter across message text, source context, host, level, and stack-trace continuations. Debounced 120ms.
+- **State persistence in `localStorage`** — view mode, ordering, level chips, framework + MCP-SDK chips, and search query all survive reload.
+- **Live W/E counters** in the header — `12 W` / `3 E` badges with click-to-filter behavior; dim out when there are zero of that level.
+- **"Errors only" preset** — one click to show WRN/ERR/FTL only.
+- **"Clear" button** — resets all filter chips, framework toggles, source/host filters, and search.
+- **MCP SDK chip** — like the Microsoft framework chip, but for `ModelContextProtocol.*`. Hides the redundant per-handler "called"/"completed" lines in Enhanced view.
+
+**Visual polish:**
+- **Sticky toolbar** — pinned 8px from the viewport top with a soft shadow; controls stay visible while scrolling deep into history.
+- **Stack-trace collapse** — multi-line exceptions show the first frame inline and tuck the rest behind a clickable `▶ N more stack frames` toggle.
+- **Host badge truncate** — long hosts (`local---client-secret-…aigw.sse.cisco.io`) clip with ellipsis; hover shows the full value.
+
+### Backend
+- **`(unparsed)` MCP log lines are now `HTTP <verb> <path>`** — e.g. `GET /mcp` (SSE stream open), `DELETE /mcp` (session teardown). The middleware now records the HTTP method and path when the request body isn't a parseable JSON-RPC envelope. The dashboard "Recent MCP requests" table and the file log both benefit.
+
 ## [v1.0.11] — 2026-05-12
 
 ### Added

@@ -25,7 +25,7 @@ internal static class LogsPage
     --border: rgba(255,255,255,0.08);
     --code-bg: #0f1428;
     --src-app: #7c5cff;
-    --src-mcp: #4ad6ff;
+    --src-mcp-fw: #4ad6ff;
     --src-fw:  #5a607a;
   }
   * { box-sizing: border-box; }
@@ -86,7 +86,40 @@ internal static class LogsPage
     padding: 10px 14px;
     margin-bottom: 12px;
     flex-wrap: wrap;
+    position: sticky;
+    top: 8px;
+    z-index: 10;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   }
+  .search-box {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px 5px 28px;
+    color: var(--fg);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    width: 180px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238a93b3' stroke-width='2'><circle cx='7' cy='7' r='5'/><line x1='10.5' y1='10.5' x2='14' y2='14'/></svg>");
+    background-repeat: no-repeat;
+    background-position: 8px center;
+    background-size: 14px;
+    outline: none;
+  }
+  .search-box:focus { border-color: var(--accent); }
+  .counters { display: inline-flex; gap: 6px; }
+  .counter {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 999px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+  }
+  .counter.warn { background: rgba(251,191,36,0.10); color: var(--warn); border: 1px solid rgba(251,191,36,0.3); }
+  .counter.err  { background: rgba(248,113,113,0.10); color: var(--err);  border: 1px solid rgba(248,113,113,0.3); }
+  .counter.zero { opacity: 0.4; }
+  .counter:hover:not(.zero) { filter: brightness(1.2); }
   .meta { display: flex; align-items: center; gap: 16px; flex: 1; flex-wrap: wrap; }
   .meta-item { font-size: 12.5px; color: var(--fg-muted); }
   .meta-item strong { color: var(--fg); font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
@@ -182,9 +215,9 @@ internal static class LogsPage
     transition: background 0.1s ease;
   }
   .row:hover { background: rgba(255,255,255,0.025); }
-  .row.src-app { border-left-color: var(--src-app); }
-  .row.src-mcp { border-left-color: var(--src-mcp); }
-  .row.src-fw  { border-left-color: var(--src-fw); }
+  .row.src-app    { border-left-color: var(--src-app); }
+  .row.src-mcp-fw { border-left-color: var(--src-mcp-fw); }
+  .row.src-fw     { border-left-color: var(--src-fw); }
   .row.WRN { background: rgba(251,191,36,0.05); }
   .row.ERR { background: rgba(248,113,113,0.07); }
   .row.FTL { background: rgba(248,113,113,0.12); }
@@ -206,10 +239,26 @@ internal static class LogsPage
     border-radius: 4px; padding: 0 2px; margin: 0 -2px;
   }
   .line .src:hover { background: rgba(124,92,255,0.15); }
-  .row.src-mcp .line .src { color: var(--accent-2); }
-  .row.src-mcp .line .src:hover { background: rgba(74,214,255,0.15); }
+  .row.src-mcp-fw .line .src { color: var(--accent-2); }
+  .row.src-mcp-fw .line .src:hover { background: rgba(74,214,255,0.15); }
   .row.src-fw .line .src { color: var(--fg-muted); }
   .row.src-fw .line .src:hover { background: rgba(255,255,255,0.08); }
+  /* Truncate long host badges; full host on hover (title attr). */
+  .line .msg .host-badge {
+    max-width: 240px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .line .msg .host-badge .dot { flex: 0 0 7px; }
+  /* Stack-trace collapse: hide conts past the first; toggle to expand. */
+  .stack-toggle {
+    cursor: pointer; padding: 1px 16px 1px 132px;
+    color: var(--fg-muted); font-size: 11.5px;
+    user-select: none;
+  }
+  .stack-toggle:hover { color: var(--accent-2); }
+  .stack-toggle::before { content: "▶ "; }
+  .stack-toggle.expanded::before { content: "▼ "; }
+  .row.cont.hidden-stack { display: none; }
   .line .msg { color: var(--fg); }
   .line .msg .host-badge {
     display: inline-flex; align-items: center; gap: 5px;
@@ -285,6 +334,10 @@ internal static class LogsPage
         <h1>Logs</h1>
         <div class="subtitle">Today, tail of last 500 lines</div>
       </div>
+      <div class="counters">
+        <span class="counter warn zero" id="c-wrn" title="Warnings — click to filter">0 W</span>
+        <span class="counter err zero" id="c-err" title="Errors — click to filter">0 E</span>
+      </div>
       <div class="pill" id="status"><span class="dot"></span> <span id="status-text">Live</span><span id="auto-pause-hint" class="auto-paused-hint" hidden>(auto)</span></div>
     </header>
 
@@ -311,7 +364,11 @@ internal static class LogsPage
           <span class="chip on" data-level="WRN">WRN</span>
           <span class="chip on" data-level="ERR">ERR</span>
           <span class="chip" data-special="framework" title="Show framework (Microsoft.*) lines in Enhanced view">Framework</span>
+          <span class="chip" data-special="mcp-fw" title="Show MCP SDK (ModelContextProtocol.*) lifecycle lines">MCP SDK</span>
         </div>
+        <input type="text" class="search-box" id="search" placeholder="Search…" autocomplete="off">
+        <button class="btn" id="errors-btn" title="Show only WRN/ERR/FTL">Errors only</button>
+        <button class="btn" id="clear-btn" title="Reset all filters">Clear</button>
         <button class="btn" id="pause-btn">Pause</button>
       </div>
     </div>
@@ -338,8 +395,10 @@ internal static class LogsPage
   let viewMode = 'enhanced';        // 'enhanced' | 'raw'
   let orderMode = 'newest';         // 'newest' | 'oldest'
   let showFramework = false;
+  let showMcpFw = false;            // hide ModelContextProtocol.* INF/DBG by default
   let sourceFilter = null;          // exact src match
   let hostFilter = null;            // exact host match
+  let searchQuery = '';
   let pausedManual = false;
   let pausedAuto = false;
   let lastRefreshTime = Date.now();
@@ -349,6 +408,11 @@ internal static class LogsPage
   const logEl     = document.getElementById('log');
   const filtersEl = document.getElementById('filters');
   const pauseBtn  = document.getElementById('pause-btn');
+  const errorsBtn = document.getElementById('errors-btn');
+  const clearBtn  = document.getElementById('clear-btn');
+  const searchEl  = document.getElementById('search');
+  const cWrn      = document.getElementById('c-wrn');
+  const cErr      = document.getElementById('c-err');
   const statusEl  = document.getElementById('status');
   const statusTxt = document.getElementById('status-text');
   const autoHint  = document.getElementById('auto-pause-hint');
@@ -359,6 +423,30 @@ internal static class LogsPage
   const viewSel   = document.getElementById('view-mode');
   const orderSel  = document.getElementById('order-mode');
   const activeFiltersEl = document.getElementById('active-filters');
+
+  // ===== Persistence =====
+  const STATE_KEY = 'mathmcp.logs.v1';
+  function saveState() {
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify({
+        viewMode, orderMode, enabled, showFramework, showMcpFw, searchQuery
+      }));
+    } catch (e) { /* private mode etc. — ignore */ }
+  }
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STATE_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (s.viewMode === 'raw' || s.viewMode === 'enhanced') viewMode = s.viewMode;
+      if (s.orderMode === 'newest' || s.orderMode === 'oldest') orderMode = s.orderMode;
+      if (s.enabled && typeof s.enabled === 'object') Object.assign(enabled, s.enabled);
+      if (typeof s.showFramework === 'boolean') showFramework = s.showFramework;
+      if (typeof s.showMcpFw === 'boolean')     showMcpFw     = s.showMcpFw;
+      if (typeof s.searchQuery === 'string')    searchQuery   = s.searchQuery;
+    } catch (e) { /* ignore */ }
+  }
+  loadState();
 
   // ===== Helpers =====
   function esc(s) {
@@ -378,14 +466,14 @@ internal static class LogsPage
   function srcCategory(src) {
     if (!src) return 'other';
     if (src.startsWith('MathMcp')) return 'app';
-    if (src.startsWith('ModelContextProtocol')) return 'mcp';
+    if (src.startsWith('ModelContextProtocol')) return 'mcp-fw';
     if (src.startsWith('Microsoft')) return 'fw';
     return 'other';
   }
   function srcClass(cat) {
-    return cat === 'app' ? 'src-app' :
-           cat === 'mcp' ? 'src-mcp' :
-           cat === 'fw'  ? 'src-fw'  : '';
+    return cat === 'app'    ? 'src-app' :
+           cat === 'mcp-fw' ? 'src-mcp-fw' :
+           cat === 'fw'     ? 'src-fw'  : '';
   }
 
   // ===== Parse =====
@@ -428,8 +516,15 @@ internal static class LogsPage
     if (sourceFilter && rec.src !== sourceFilter) return false;
     if (hostFilter && rec.host !== hostFilter) return false;
     if (viewMode === 'enhanced') {
-      const isErr = rec.level === 'WRN' || rec.level === 'ERR' || rec.level === 'FTL';
-      if (rec.cat === 'fw' && !isErr && !showFramework) return false;
+      const isImportant = rec.level === 'WRN' || rec.level === 'ERR' || rec.level === 'FTL';
+      if (rec.cat === 'fw'     && !isImportant && !showFramework) return false;
+      if (rec.cat === 'mcp-fw' && !isImportant && !showMcpFw)     return false;
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const hay = (rec.msg + ' ' + rec.src + ' ' + rec.host + ' ' + rec.level + ' ' +
+                   rec.conts.join(' ')).toLowerCase();
+      if (!hay.includes(q)) return false;
     }
     return true;
   }
@@ -478,13 +573,47 @@ internal static class LogsPage
         `<span class="msg">${renderMsg(rec.msg, rec.host)}</span>` +
       `</div>`;
     const out = [row];
-    for (const c of rec.conts) {
+    // Stack-trace collapse: when 2+ continuation lines exist, show the first
+    // inline and tuck the rest behind a clickable "▶ N more" toggle.
+    const conts = rec.conts;
+    const collapseFrom = conts.length >= 2 ? 1 : conts.length;
+    for (let i = 0; i < collapseFrom; i++) {
       const cd = document.createElement('div');
       cd.className = `row cont ${rec.level}`;
-      cd.innerHTML = `<div class="line">${esc(c)}</div>`;
+      cd.innerHTML = `<div class="line">${esc(conts[i])}</div>`;
       out.push(cd);
     }
+    if (conts.length > collapseFrom) {
+      const hidden = [];
+      for (let i = collapseFrom; i < conts.length; i++) {
+        const cd = document.createElement('div');
+        cd.className = `row cont hidden-stack ${rec.level}`;
+        cd.innerHTML = `<div class="line">${esc(conts[i])}</div>`;
+        hidden.push(cd);
+      }
+      const toggle = document.createElement('div');
+      toggle.className = 'stack-toggle';
+      toggle.textContent = `${conts.length - collapseFrom} more stack frame${conts.length - collapseFrom === 1 ? '' : 's'}`;
+      toggle.addEventListener('click', () => {
+        const expanded = toggle.classList.toggle('expanded');
+        hidden.forEach(h => h.classList.toggle('hidden-stack', !expanded));
+        toggle.textContent = expanded
+          ? `hide ${conts.length - collapseFrom} stack frame${conts.length - collapseFrom === 1 ? '' : 's'}`
+          : `${conts.length - collapseFrom} more stack frame${conts.length - collapseFrom === 1 ? '' : 's'}`;
+      });
+      out.push(toggle);
+      out.push(...hidden);
+    }
     return out;
+  }
+
+  function updateCounters() {
+    const w = records.reduce((n, r) => n + (r.level === 'WRN' ? 1 : 0), 0);
+    const e = records.reduce((n, r) => n + (r.level === 'ERR' || r.level === 'FTL' ? 1 : 0), 0);
+    cWrn.textContent = `${w} W`;
+    cErr.textContent = `${e} E`;
+    cWrn.classList.toggle('zero', w === 0);
+    cErr.classList.toggle('zero', e === 0);
   }
 
   function render() {
@@ -495,8 +624,25 @@ internal static class LogsPage
       renderEnhanced();
     }
     renderActiveFilters();
+    updateCounters();
     if (wasAtNewest) snapToNewest();
   }
+
+  // Sync UI controls with current state (called once at startup after loadState).
+  function syncUi() {
+    document.body.classList.toggle('is-raw', viewMode === 'raw');
+    viewSel.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('on', b.dataset.view === viewMode));
+    orderSel.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('on', b.dataset.order === orderMode));
+    filtersEl.querySelectorAll('.chip[data-level]').forEach(c => {
+      c.classList.toggle('on', !!enabled[c.dataset.level]);
+    });
+    filtersEl.querySelector('.chip[data-special="framework"]').classList.toggle('on', showFramework);
+    filtersEl.querySelector('.chip[data-special="mcp-fw"]').classList.toggle('on', showMcpFw);
+    searchEl.value = searchQuery;
+  }
+  syncUi();
 
   function renderRaw() {
     // True file dump — no filtering. Lines reordered if newest-first; otherwise
@@ -603,8 +749,11 @@ internal static class LogsPage
     } else if (chip.dataset.special === 'framework') {
       showFramework = !showFramework;
       chip.classList.toggle('on', showFramework);
+    } else if (chip.dataset.special === 'mcp-fw') {
+      showMcpFw = !showMcpFw;
+      chip.classList.toggle('on', showMcpFw);
     }
-    render();
+    saveState(); render();
   });
 
   // ===== View / Order toggles =====
@@ -614,15 +763,54 @@ internal static class LogsPage
     viewMode = btn.dataset.view;
     viewSel.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.view === viewMode));
     document.body.classList.toggle('is-raw', viewMode === 'raw');
-    render();
+    saveState(); render();
   });
   orderSel.addEventListener('click', e => {
     const btn = e.target.closest('button[data-order]');
     if (!btn) return;
     orderMode = btn.dataset.order;
     orderSel.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.order === orderMode));
-    render();
+    saveState(); render();
     snapToNewest();
+  });
+
+  // ===== Search =====
+  let searchTimer = null;
+  searchEl.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchQuery = searchEl.value;
+      saveState(); render();
+    }, 120);
+  });
+
+  // ===== Presets =====
+  errorsBtn.addEventListener('click', () => {
+    enabled.INF = false; enabled.DBG = false; enabled.VRB = false;
+    enabled.WRN = true;  enabled.ERR = true;  enabled.FTL = true;
+    syncUi(); saveState(); render();
+  });
+  clearBtn.addEventListener('click', () => {
+    enabled.INF = true; enabled.DBG = true; enabled.WRN = true;
+    enabled.ERR = true; enabled.FTL = true; enabled.VRB = true;
+    showFramework = false; showMcpFw = false;
+    sourceFilter = null; hostFilter = null;
+    searchQuery = '';
+    syncUi(); saveState(); render();
+  });
+
+  // Counter pills click to filter to that level.
+  cWrn.addEventListener('click', () => {
+    if (cWrn.classList.contains('zero')) return;
+    enabled.INF = false; enabled.DBG = false; enabled.VRB = false;
+    enabled.WRN = true;  enabled.ERR = false; enabled.FTL = false;
+    syncUi(); saveState(); render();
+  });
+  cErr.addEventListener('click', () => {
+    if (cErr.classList.contains('zero')) return;
+    enabled.INF = false; enabled.DBG = false; enabled.VRB = false;
+    enabled.WRN = false; enabled.ERR = true;  enabled.FTL = true;
+    syncUi(); saveState(); render();
   });
 
   // ===== Click-to-filter =====

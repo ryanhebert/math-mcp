@@ -62,23 +62,37 @@ public sealed class RequestLogMiddleware
     {
         var sw = Stopwatch.StartNew();
         var ts = DateTime.UtcNow;
+        var httpMethod = context.Request.Method;
+        var pathStr = context.Request.Path.Value ?? "/mcp";
 
         // Buffer the body so we can both read it for JSON-RPC parsing and pass
         // it downstream to the MCP handler.
         context.Request.EnableBuffering();
-        var (method, args) = await TryParseJsonRpc(context);
+        var (jsonRpcMethod, args) = await TryParseJsonRpc(context);
         context.Request.Body.Position = 0;
 
         await _next(context);
         sw.Stop();
 
         var status = context.Response.StatusCode;
-        // 401 from auth means we never saw the body — relabel.
-        if (status == StatusCodes.Status401Unauthorized && string.IsNullOrEmpty(method))
+        // Compose a useful display label:
+        //   - JSON-RPC method when we parsed one ("tools/call", "initialize", …)
+        //   - "(unauthenticated)" for 401 with no parsed method
+        //   - "HTTP <verb> <path>" otherwise (GET /mcp for SSE stream open,
+        //     DELETE /mcp for session teardown, etc.)
+        string method;
+        if (!string.IsNullOrEmpty(jsonRpcMethod))
+        {
+            method = jsonRpcMethod;
+        }
+        else if (status == StatusCodes.Status401Unauthorized)
         {
             method = "(unauthenticated)";
         }
-        if (string.IsNullOrEmpty(method)) method = "(unparsed)";
+        else
+        {
+            method = $"{httpMethod} {pathStr}";
+        }
 
         var host = context.Request.Host.Value ?? "";
         var remoteIp = ResolveRemoteIp(context);
