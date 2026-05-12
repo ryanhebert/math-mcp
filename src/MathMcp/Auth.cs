@@ -90,6 +90,9 @@ public sealed class AuthMiddleware
 
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
+            _logger.LogWarning(
+                "Token check on /mcp → 401 malformed (non-Bearer scheme): header={HeaderPreview}",
+                Truncate(header));
             await WriteUnauthorized(context, "invalid_request", "malformed Authorization header");
             return;
         }
@@ -115,8 +118,22 @@ public sealed class AuthMiddleware
         }
 
         _logger.LogWarning(
-            "Token check on /mcp → 401 invalid_token — re-auth instructions sent in WWW-Authenticate");
+            "Token check on /mcp → 401 invalid_token — presented={Preview} re-auth instructions sent in WWW-Authenticate",
+            Truncate(presented));
         await WriteUnauthorized(context, "invalid_token", "bearer token not recognized");
+    }
+
+    /// <summary>
+    /// Returns a short, log-safe preview of a credential-like string. Shows the
+    /// first 10 characters (typically the format prefix like <c>mm_st_</c> or
+    /// <c>eyJhbGciO</c>) and the total length — enough to identify what kind of
+    /// token a client is sending without exposing the secret.
+    /// </summary>
+    private static string Truncate(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "(empty)";
+        var head = s.Length <= 10 ? s : s.Substring(0, 10) + "...";
+        return $"{head} (len={s.Length})";
     }
 
     /// <summary>

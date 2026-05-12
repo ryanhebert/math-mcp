@@ -232,6 +232,53 @@ internal static class IndexPage
   footer { color: var(--fg-muted); font-size: 12px; margin-top: 32px; text-align: center; }
   footer a { color: var(--accent-2); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
+  .update-banner {
+    display: none;
+    align-items: center; justify-content: space-between; gap: 16px;
+    padding: 12px 18px; margin: 0 0 18px;
+    background: linear-gradient(90deg, rgba(124,92,255,0.18) 0%, rgba(74,214,255,0.12) 100%);
+    border: 1px solid rgba(124,92,255,0.4);
+    border-radius: 12px;
+    font-size: 13px;
+  }
+  .update-banner.show { display: flex; }
+  .update-banner .left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .update-banner .spark {
+    display: inline-grid; place-items: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    color: #0b1020; font-weight: 700;
+  }
+  .update-banner strong { color: var(--fg); }
+  .update-banner .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .update-banner .actions a {
+    color: var(--accent-2); text-decoration: none;
+    border: 1px solid rgba(74,214,255,0.4);
+    border-radius: 8px;
+    padding: 5px 12px;
+    font-size: 12px;
+    transition: all 0.15s ease;
+  }
+  .update-banner .actions a:hover { background: rgba(74,214,255,0.08); }
+  .update-banner .actions a.primary {
+    color: var(--accent); border-color: rgba(124,92,255,0.5);
+    background: rgba(124,92,255,0.10);
+  }
+  .update-banner .actions a.primary:hover { background: rgba(124,92,255,0.18); }
+  .update-banner .upgrade-cmd {
+    color: var(--fg); background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11.5px;
+  }
+  .update-banner .dismiss {
+    background: none; border: none; cursor: pointer;
+    color: var(--fg-muted); font-size: 18px; line-height: 1;
+    padding: 0 4px;
+  }
+  .update-banner .dismiss:hover { color: var(--fg); }
 </style>
 </head>
 <body>
@@ -244,6 +291,21 @@ internal static class IndexPage
       </div>
       <div class="pill"><span class="dot"></span> Running</div>
     </header>
+
+    <div class="update-banner" id="update-banner">
+      <div class="left" id="ub-left">
+        <span class="spark">↑</span>
+        <span>Update available: <strong id="ub-version">—</strong></span>
+        <span style="color:var(--fg-muted)">·</span>
+        <span id="ub-status" style="color:var(--fg-muted)">downloads, swaps, and restarts in place</span>
+      </div>
+      <div class="actions" id="ub-actions">
+        <button class="primary" id="ub-upgrade" style="background:rgba(124,92,255,0.10); color:var(--accent); border:1px solid rgba(124,92,255,0.5); border-radius:8px; padding:5px 12px; font-size:12px; cursor:pointer;">Upgrade now</button>
+        <a id="ub-dl" href="#" target="_blank" rel="noopener">Download ↗</a>
+        <a id="ub-notes" href="#" target="_blank" rel="noopener">Release notes ↗</a>
+        <button class="dismiss" id="ub-dismiss" title="Dismiss for now">×</button>
+      </div>
+    </div>
 
     <div class="grid">
       <div class="card">
@@ -403,6 +465,134 @@ internal static class IndexPage
       setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
     });
   });
+
+  (function() {
+    // ===== Check-for-updates banner =====
+    // Queries GitHub's public API (CORS-enabled, anonymous, ~60/hr rate limit
+    // per IP). Caches the answer for an hour so we don't hammer it. No
+    // backend involvement; everything runs in the browser.
+    const CURRENT = "{{m.Version}}";
+    const CACHE_KEY  = 'mathmcp.update.check.v1';
+    const CACHE_TTL_MS = 60 * 60 * 1000;
+    const DISMISS_KEY = 'mathmcp.update.dismissed';
+
+    const banner   = document.getElementById('update-banner');
+    const ubVersion = document.getElementById('ub-version');
+    const ubDl     = document.getElementById('ub-dl');
+    const ubNotes  = document.getElementById('ub-notes');
+    const ubDismiss = document.getElementById('ub-dismiss');
+    const ubUpgrade = document.getElementById('ub-upgrade');
+    const ubStatus = document.getElementById('ub-status');
+    const ubActions = document.getElementById('ub-actions');
+
+    function cmpVersion(a, b) {
+      const ap = a.split('.').map(n => parseInt(n, 10) || 0);
+      const bp = b.split('.').map(n => parseInt(n, 10) || 0);
+      const len = Math.max(ap.length, bp.length);
+      for (let i = 0; i < len; i++) {
+        const av = ap[i] || 0, bv = bp[i] || 0;
+        if (av !== bv) return av < bv ? -1 : 1;
+      }
+      return 0;
+    }
+
+    async function checkUpdate() {
+      let latest = null;
+      try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (raw) {
+          const c = JSON.parse(raw);
+          if (c && c.ts && (Date.now() - c.ts) < CACHE_TTL_MS) {
+            latest = c.data;
+          }
+        }
+        if (!latest) {
+          const res = await fetch(
+            'https://api.github.com/repos/ryanhebert/math-mcp/releases/latest',
+            { headers: { Accept: 'application/vnd.github+json' } });
+          if (!res.ok) return;
+          const j = await res.json();
+          latest = { tag: j.tag_name, htmlUrl: j.html_url };
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: latest }));
+        }
+      } catch (_) { return; }
+
+      if (!latest || !latest.tag) return;
+      const latestSemver = latest.tag.replace(/^v/, '');
+      if (cmpVersion(latestSemver, CURRENT) <= 0) return;
+
+      // Don't re-show if user dismissed this same version.
+      if (localStorage.getItem(DISMISS_KEY) === latest.tag) return;
+
+      ubVersion.textContent = latest.tag;
+      ubDl.href = `https://github.com/ryanhebert/math-mcp/releases/download/${latest.tag}/MathMcp-${latest.tag}.exe`;
+      ubNotes.href = latest.htmlUrl;
+      banner.classList.add('show');
+    }
+
+    ubDismiss.addEventListener('click', () => {
+      localStorage.setItem(DISMISS_KEY, ubVersion.textContent);
+      banner.classList.remove('show');
+    });
+
+    async function pollForVersion(targetSemver) {
+      const start = Date.now();
+      let lastSeen = '';
+      while (Date.now() - start < 180000) {
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          const r = await fetch('/info', { cache: 'no-store' });
+          if (r.ok) {
+            const info = await r.json();
+            if (info.version) {
+              lastSeen = info.version;
+              if (cmpVersion(info.version, targetSemver) >= 0) return true;
+            }
+          }
+        } catch (_) { /* expected while service is restarting */ }
+      }
+      return false;
+    }
+
+    ubUpgrade.addEventListener('click', async () => {
+      const target = ubVersion.textContent;
+      const targetSemver = target.replace(/^v/, '');
+      if (!confirm(`Upgrade this server to ${target}? The service will stop, swap binaries, and restart (~30 seconds). Connected MCP clients will see a brief outage.`)) return;
+      ubActions.querySelectorAll('a, button').forEach(el => el.setAttribute('disabled', 'true'));
+      ubUpgrade.textContent = 'Working…';
+      ubStatus.textContent = 'requesting upgrade…';
+      try {
+        const res = await fetch('/upgrade', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version: target }),
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          ubStatus.textContent = `server returned ${res.status}: ${body.slice(0, 200)}`;
+          ubUpgrade.textContent = 'Retry';
+          ubActions.querySelectorAll('a, button').forEach(el => el.removeAttribute('disabled'));
+          return;
+        }
+        ubStatus.textContent = 'downloading on server… service will restart shortly';
+        const ok = await pollForVersion(targetSemver);
+        if (ok) {
+          ubStatus.textContent = 'done — reloading';
+          setTimeout(() => location.reload(), 1000);
+        } else {
+          ubStatus.textContent = 'timeout — check /logs and service status manually';
+          ubUpgrade.textContent = 'Retry';
+          ubActions.querySelectorAll('a, button').forEach(el => el.removeAttribute('disabled'));
+        }
+      } catch (e) {
+        ubStatus.textContent = `error: ${e.message}`;
+        ubUpgrade.textContent = 'Retry';
+        ubActions.querySelectorAll('a, button').forEach(el => el.removeAttribute('disabled'));
+      }
+    });
+
+    checkUpdate();
+  })();
 
   (function() {
     const tbody = document.getElementById('reqs-tbody');

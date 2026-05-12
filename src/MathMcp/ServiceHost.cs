@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -253,6 +254,7 @@ public static class ServiceHost
             MapLogsEndpoints(app);
             MapCertEndpoints(app, cert);
             MapFavicon(app);
+            MapUpgradeEndpoint(app);
 
             app.Run();
             return 0;
@@ -446,6 +448,122 @@ public static class ServiceHost
             sb.Append(hex, i, 2);
         }
         return sb.ToString();
+    }
+
+    private static void MapUpgradeEndpoint(WebApplication app)
+    {
+        // POST /upgrade — downloads a newer MathMcp.exe from GitHub, writes a
+        // small batch-script helper, spawns the helper as a detached process,
+        // and asks SCM to stop the service. The helper waits for the service
+        // process to exit, moves the new binary over the running one, and
+        // starts the service back up.
+        //
+        // Returns 202 immediately. The browser side polls /info to learn when
+        // the new version is live.
+        //
+        // Anyone reaching the dashboard can trigger this — same security
+        // posture as the rest of the public dashboard.
+        app.MapPost("/upgrade", async (HttpContext ctx) =>
+        {
+            var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("MathMcp.Upgrade");
+
+            string version = "latest";
+            try
+            {
+                if (ctx.Request.HasJsonContentType())
+                {
+                    using var doc = await System.Text.Json.JsonDocument.ParseAsync(ctx.Request.Body);
+                    if (doc.RootElement.TryGetProperty("version", out var v) &&
+                        v.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        version = v.GetString() ?? "latest";
+                    }
+                }
+            }
+            catch { /* default to latest */ }
+
+            // Only accept "latest" or version tags shaped like v1.2.3[.4].
+            if (version != "latest" &&
+                !System.Text.RegularExpressions.Regex.IsMatch(version, @"^v\d+\.\d+\.\d+(\.\d+)?$"))
+            {
+                return Results.Json(new { status = "error", error = "invalid_version" }, statusCode: 400);
+            }
+
+            var downloadUrl = version == "latest"
+                ? "https://github.com/ryanhebert/math-mcp/releases/latest/download/MathMcp.exe"
+                : $"https://github.com/ryanhebert/math-mcp/releases/download/{version}/MathMcp-{version}.exe";
+
+            var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "-";
+            logger.LogWarning("Upgrade requested: target={Version} ip={Ip}", version, ip);
+
+            var newExePath = Path.Combine(Installer.InstallDir, "MathMcp.exe.new");
+            var helperPath = Path.Combine(Installer.InstallDir, "upgrade-helper.cmd");
+            var installedExePath = Installer.InstalledExePath;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+                    var asmVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0";
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd($"MathMcp-Upgrade/{asmVersion}");
+
+                    logger.LogInformation("Downloading {Url}", downloadUrl);
+                    var bytes = await http.GetByteArrayAsync(downloadUrl);
+
+                    if (bytes.Length < 1_000_000 || bytes[0] != (byte)'M' || bytes[1] != (byte)'Z')
+                    {
+                        logger.LogError(
+                            "Downloaded artifact rejected: invalid PE (size={Size}, header={H0:X2}{H1:X2})",
+                            bytes.Length, bytes.Length > 0 ? bytes[0] : 0, bytes.Length > 1 ? bytes[1] : 0);
+                        return;
+                    }
+
+                    await File.WriteAllBytesAsync(newExePath, bytes);
+                    logger.LogInformation("Wrote {Bytes} bytes to {Path}", bytes.Length, newExePath);
+
+                    var helperContent =
+                        "@echo off\r\n" +
+                        "timeout /t 3 /nobreak >nul\r\n" +
+                        $"sc stop {Installer.ServiceName} >nul 2>&1\r\n" +
+                        ":wait_exit\r\n" +
+                        "tasklist /fi \"imagename eq MathMcp.exe\" 2>nul | find /i \"MathMcp.exe\" >nul\r\n" +
+                        "if errorlevel 1 goto :swap\r\n" +
+                        "timeout /t 1 /nobreak >nul\r\n" +
+                        "goto :wait_exit\r\n" +
+                        ":swap\r\n" +
+                        $"move /y \"{newExePath}\" \"{installedExePath}\" >nul 2>&1\r\n" +
+                        $"sc start {Installer.ServiceName} >nul 2>&1\r\n" +
+                        "exit /b 0\r\n";
+                    await File.WriteAllTextAsync(helperPath, helperContent);
+
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c \"{helperPath}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WindowStyle = ProcessWindowStyle.Hidden,
+                    };
+                    using var p = Process.Start(psi);
+                    logger.LogInformation(
+                        "Upgrade helper spawned (PID {Pid}). Service stop will follow in ~3s.",
+                        p?.Id);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Upgrade pipeline failed");
+                }
+            });
+
+            return Results.Json(new
+            {
+                status = "initiated",
+                target_version = version,
+                note = "Watch /info — the 'version' field will change when the new binary is running.",
+            }, statusCode: 202);
+        });
     }
 
     private static LogEventLevel ParseSerilogLevel(string s) => s.ToLowerInvariant() switch

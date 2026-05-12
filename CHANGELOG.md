@@ -2,6 +2,17 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.14] — 2026-05-12
+
+### Added
+- **Check-for-updates banner on the dashboard.** When a newer release is available on GitHub, the index page shows a banner with the new version, a one-click in-UI upgrade button, a manual download link, and a link to the release notes. Pure client-side query to GitHub's public `releases/latest` API (CORS-enabled, ~60 req/hr/IP rate limit); result cached in `localStorage` for an hour.
+- **One-click in-UI upgrade.** Banner has an "Upgrade now" button that confirms, POSTs `/upgrade` with the target version, then polls `/info` for the new version to appear. The server downloads the new exe, writes a batch helper, asks SCM to stop the service; the helper waits for the process to exit, swaps the binary, and starts the service back up. Total downtime is ~10–30 seconds depending on download time. Anyone reaching the public dashboard can trigger this — same security posture as the rest of the dashboard.
+- **`POST /upgrade` endpoint.** Accepts `{ "version": "v1.2.3" }` or omits it for "latest". Version param is regex-validated (`v\d+\.\d+\.\d+(\.\d+)?`) before any I/O. Downloaded artifact is verified as a Windows PE (must start with `MZ` and exceed 1 MB) before being staged for swap. Returns 202 immediately; the actual swap is fire-and-forget so the client doesn't time out.
+- **Truncated-bearer logging on 401.** `AuthMiddleware` now logs the first 10 chars + length of any rejected bearer or non-Bearer header. Lets you tell at a glance whether a probe is sending one of *our* tokens (`mm_st_…`, `mm_at_…`) or something completely different (`eyJ…`, etc.) — useful when chasing leaked-state bugs in upstream gateways.
+
+### Changed
+- **Installer grants `Modify` (not just `Read+Execute`) on the install directory** to the service account. Required so the service can stage `MathMcp.exe.new` for the in-UI upgrade. This is a deliberate test-server trade-off; the service account already owns the entire MCP surface and credentials, so granting it the ability to swap its own binary doesn't change the threat model.
+
 ## [v1.0.13] — 2026-05-12
 
 ### Changed

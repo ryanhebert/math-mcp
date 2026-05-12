@@ -450,11 +450,15 @@ public static class Installer
 
     private static void GrantInstallDirAccess()
     {
-        // Read & execute on install dir (so service can read config + cert).
+        // Modify on install dir (so service can read config + cert AND
+        // write/swap the new binary during a self-upgrade triggered from /upgrade).
+        // Test-server posture: the service account already owns the entire MCP
+        // surface and creds; letting it self-upgrade doesn't change the threat
+        // model meaningfully.
         Run("icacls.exe", new[]
         {
             InstallDir,
-            "/grant", $"{ServiceAccount}:(OI)(CI)RX",
+            "/grant", $"{ServiceAccount}:(OI)(CI)M",
             "/T", "/C", "/Q",
         });
         // Modify on logs dir (so service can write/rotate log files).
