@@ -14,6 +14,7 @@ Distributed as a single self-contained `MathMcp.exe`. No .NET runtime install re
 
 1. Download `MathMcp.exe`:
     - **Latest:** <https://github.com/ryanhebert/math-mcp/releases/latest/download/MathMcp.exe>
+    - **v1.0.6** (log viewer overhaul: Raw/Enhanced, newest-first, click-to-filter; per-request origin tracking): <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.6/MathMcp.exe>
     - **v1.0.5** (mixed-mode auth: bearer, OAuth2, or anonymous; copy-button fix): <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.5/MathMcp.exe>
     - **v1.0.4** (adds `--auth`, `/logs`, recent-requests panel, cert download): <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.4/MathMcp.exe>
     - **v1.0.3** (no auth; basic dashboard only): <https://github.com/ryanhebert/math-mcp/releases/download/v1.0.3/MathMcp.exe>
