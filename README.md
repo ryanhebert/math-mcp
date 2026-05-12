@@ -134,7 +134,9 @@ Issued OAuth2 tokens are kept in memory only and are invalidated on service rest
 
 - Windows Event Log, source: `MathMcp`
 - File log: `C:\Program Files\MathMcp\logs\` (rolling daily, 30-day retention)
-- Live web viewer at `http://<host>:52080/logs` — auto-refreshes every 3s, level filters, pausable
+- Live web viewer at `http://<host>:52080/logs` — auto-refreshes every 3s; level filters; click any source or origin badge to drill down; auto-pauses on scroll-up; Enhanced (default) vs Raw view; Newest-first vs Oldest-first ordering.
+
+ASP.NET's per-request lifecycle category (`Microsoft.AspNetCore`) is filtered to Warning at the Serilog sink so the log file stays focused on app and MCP events. Each `/mcp` request emits one structured `MathMcp.RequestLogMiddleware` line capturing host, IP, method, status, and duration.
 
 ## Uninstall
 

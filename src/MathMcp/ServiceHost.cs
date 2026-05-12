@@ -37,6 +37,15 @@ public static class ServiceHost
 
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Is(ParseSerilogLevel(config.LogLevel))
+            // ASP.NET's per-request lifecycle logs (Request starting / Executing
+            // endpoint / Write content / Executed endpoint / Request finished)
+            // are pure noise on a small server like this — they dominate the
+            // log and bury the events that matter. Push the framework category
+            // to Warning so only genuine issues surface. App + MCP logs are
+            // unaffected by this override.
+            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+            // Keep startup/shutdown messages ("Now listening on …") visible.
+            .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
             .Enrich.FromLogContext()
             .WriteTo.File(
                 path: Path.Combine(Installer.LogDir, "mathmcp-.log"),

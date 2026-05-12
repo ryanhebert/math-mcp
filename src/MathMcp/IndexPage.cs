@@ -196,6 +196,20 @@ internal static class IndexPage
   table.reqs .ts { color: var(--fg-muted); width: 1%; white-space: nowrap; }
   table.reqs .args { color: var(--fg); }
   table.reqs .dur { color: var(--fg-muted); width: 1%; white-space: nowrap; }
+  table.reqs .origin {
+    display: inline-flex; align-items: center; gap: 6px;
+    max-width: 260px;
+  }
+  table.reqs .origin .host {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--fg);
+  }
+  table.reqs .origin .ip { color: var(--fg-muted); font-size: 11px; }
+  .origin-dot {
+    width: 8px; height: 8px; flex: 0 0 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 4px rgba(0,0,0,0.4) inset;
+  }
   .status {
     display: inline-block; min-width: 38px; text-align: center;
     padding: 2px 8px; border-radius: 6px;
@@ -270,6 +284,7 @@ internal static class IndexPage
           <thead>
             <tr>
               <th>Time</th>
+              <th>Origin</th>
               <th>Method</th>
               <th>Args</th>
               <th>Status</th>
@@ -381,21 +396,43 @@ internal static class IndexPage
     function esc(s) {
       return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
+    function colorFor(s) {
+      let h = 0;
+      const str = s || '-';
+      for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffff;
+      return `hsl(${h % 360}, 60%, 60%)`;
+    }
+    function hostOnly(host) {
+      if (!host) return '—';
+      // Strip :port
+      const i = host.indexOf(':');
+      return i > 0 ? host.slice(0, i) : host;
+    }
     function render(items) {
       if (!items || !items.length) {
-        tbody.innerHTML = '<tr><td colspan="5"><div class="reqs-empty">No MCP requests yet.</div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6"><div class="reqs-empty">No MCP requests yet.</div></td></tr>';
         summary.textContent = '—';
         return;
       }
-      tbody.innerHTML = items.slice(0, 10).map(r =>
-        `<tr>` +
+      tbody.innerHTML = items.slice(0, 10).map(r => {
+        const host = hostOnly(r.host || '');
+        const ip = r.remoteIp || '';
+        const c = colorFor(host);
+        const originHtml = host === '—'
+          ? `<span class="origin"><span class="origin-dot" style="background:${c}"></span><span class="host">—</span></span>`
+          : `<span class="origin" title="${esc(host)}${ip ? ' (' + esc(ip) + ')' : ''}">` +
+              `<span class="origin-dot" style="background:${c}"></span>` +
+              `<span class="host">${esc(host)}</span>` +
+            `</span>`;
+        return `<tr>` +
           `<td class="mono ts">${esc(fmtTime(r.timestampIso))}</td>` +
+          `<td class="mono">${originHtml}</td>` +
           `<td class="mono">${esc(r.method)}</td>` +
           `<td class="mono args">${esc(r.args)}</td>` +
           `<td><span class="status ${statusClass(r.status)}">${r.status}</span></td>` +
           `<td class="mono dur">${r.durationMs} ms</td>` +
-        `</tr>`
-      ).join('');
+        `</tr>`;
+      }).join('');
       summary.textContent = `Last ${Math.min(items.length, 10)} requests`;
     }
     render(initial);

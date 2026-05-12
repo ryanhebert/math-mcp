@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace MathMcp;
 
@@ -10,7 +11,9 @@ public sealed record RequestLogEntry(
     string Method,
     string Args,
     int Status,
-    int DurationMs);
+    int DurationMs,
+    string Host,
+    string RemoteIp);
 
 public sealed class RequestLog
 {
@@ -43,11 +46,16 @@ public sealed class RequestLogMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly RequestLog _log;
+    private readonly ILogger<RequestLogMiddleware> _logger;
 
-    public RequestLogMiddleware(RequestDelegate next, RequestLog log)
+    public RequestLogMiddleware(
+        RequestDelegate next,
+        RequestLog log,
+        ILogger<RequestLogMiddleware> logger)
     {
         _next = next;
         _log = log;
+        _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -72,12 +80,37 @@ public sealed class RequestLogMiddleware
         }
         if (string.IsNullOrEmpty(method)) method = "(unparsed)";
 
+        var host = context.Request.Host.Value ?? "";
+        var remoteIp = ResolveRemoteIp(context);
+        var durationMs = (int)sw.ElapsedMilliseconds;
+
         _log.Record(new RequestLogEntry(
             TimestampIso: ts.ToString("O"),
             Method: method,
             Args: args,
             Status: status,
-            DurationMs: (int)sw.ElapsedMilliseconds));
+            DurationMs: durationMs,
+            Host: host,
+            RemoteIp: remoteIp));
+
+        // Replaces the suppressed framework lifecycle lines with one concise,
+        // greppable summary per MCP request.
+        _logger.LogInformation(
+            "MCP {Method} {Args} host={Host} ip={RemoteIp} status={Status} dur={DurationMs}ms",
+            method, args, host, remoteIp, status, durationMs);
+    }
+
+    private static string ResolveRemoteIp(HttpContext context)
+    {
+        // Prefer X-Forwarded-For if a proxy is in front; otherwise the direct
+        // peer. Falls back to "-" if neither is available.
+        var xff = context.Request.Headers["X-Forwarded-For"].ToString();
+        if (!string.IsNullOrWhiteSpace(xff))
+        {
+            var first = xff.Split(',', 2)[0].Trim();
+            if (!string.IsNullOrWhiteSpace(first)) return first;
+        }
+        return context.Connection.RemoteIpAddress?.ToString() ?? "-";
     }
 
     private static async Task<(string Method, string Args)> TryParseJsonRpc(HttpContext context)
