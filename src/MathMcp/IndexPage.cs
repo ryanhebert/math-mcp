@@ -279,6 +279,29 @@ internal static class IndexPage
     padding: 0 4px;
   }
   .update-banner .dismiss:hover { color: var(--fg); }
+  .update-banner .progress {
+    flex: 0 0 100%;
+    height: 4px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
+    display: none;
+  }
+  .update-banner .progress.show { display: block; }
+  .update-banner .progress-bar {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+    transition: width 0.3s ease;
+  }
+  .update-banner .progress-bar.indeterminate {
+    width: 30%;
+    animation: indet 1.5s ease-in-out infinite;
+  }
+  @keyframes indet {
+    0%   { margin-left: -30%; }
+    100% { margin-left: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -305,6 +328,7 @@ internal static class IndexPage
         <a id="ub-notes" href="#" target="_blank" rel="noopener">Release notes ↗</a>
         <button class="dismiss" id="ub-dismiss" title="Dismiss for now">×</button>
       </div>
+      <div class="progress" id="ub-progress"><div class="progress-bar" id="ub-progress-bar"></div></div>
     </div>
 
     <div class="grid">
@@ -535,23 +559,96 @@ internal static class IndexPage
       banner.classList.remove('show');
     });
 
-    async function pollForVersion(targetSemver) {
+    const ubProgress = document.getElementById('ub-progress');
+    const ubProgressBar = document.getElementById('ub-progress-bar');
+
+    function fmtBytes(n) {
+      if (n == null) return '—';
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function setProgress(percentOrIndet, visible) {
+      ubProgress.classList.toggle('show', visible);
+      if (percentOrIndet === 'indet') {
+        ubProgressBar.classList.add('indeterminate');
+        ubProgressBar.style.width = '';
+      } else {
+        ubProgressBar.classList.remove('indeterminate');
+        ubProgressBar.style.width = `${Math.max(0, Math.min(100, percentOrIndet))}%`;
+      }
+    }
+
+    function statusLabel(s) {
+      switch (s.state) {
+        case 'downloading':
+          if (s.bytes_total && s.bytes_downloaded != null) {
+            const pct = (s.bytes_downloaded / s.bytes_total) * 100;
+            return `downloading ${fmtBytes(s.bytes_downloaded)} / ${fmtBytes(s.bytes_total)} (${pct.toFixed(0)}%)`;
+          }
+          return `downloading ${fmtBytes(s.bytes_downloaded ?? 0)}…`;
+        case 'staged':     return 'verified — preparing service restart…';
+        case 'restarting': return 'service is restarting…';
+        case 'failed':     return `failed: ${s.message ?? 'unknown error'}`;
+        case 'done':       return 'done — reloading';
+        case 'idle':       return 'idle';
+        default:           return s.state;
+      }
+    }
+
+    async function pollUpgrade(targetSemver) {
       const start = Date.now();
-      let lastSeen = '';
+      let lastState = null;
       while (Date.now() - start < 180000) {
-        await new Promise(r => setTimeout(r, 2000));
+        // 1) Try the structured status endpoint first.
+        let saw200 = false;
         try {
-          const r = await fetch('/info', { cache: 'no-store' });
+          const r = await fetch('/upgrade/status', { cache: 'no-store' });
           if (r.ok) {
-            const info = await r.json();
-            if (info.version) {
-              lastSeen = info.version;
-              if (cmpVersion(info.version, targetSemver) >= 0) return true;
+            const s = await r.json();
+            saw200 = true;
+            lastState = s.state;
+            ubStatus.textContent = statusLabel(s);
+            if (s.state === 'downloading') {
+              if (s.bytes_total && s.bytes_downloaded != null) {
+                setProgress((s.bytes_downloaded / s.bytes_total) * 100, true);
+              } else {
+                setProgress('indet', true);
+              }
+            } else if (s.state === 'staged' || s.state === 'restarting') {
+              setProgress('indet', true);
+            } else if (s.state === 'failed') {
+              setProgress(0, false);
+              return { ok: false, message: s.message };
             }
           }
-        } catch (_) { /* expected while service is restarting */ }
+        } catch (_) { /* fall through to /info polling */ }
+
+        // 2) /info — once the new version is up, we're done. This also tells
+        //    us if the server is mid-restart (connection refused / 5xx).
+        try {
+          const ir = await fetch('/info', { cache: 'no-store' });
+          if (ir.ok) {
+            const info = await ir.json();
+            if (info.version) {
+              const installed = info.version.split('+')[0]; // strip git suffix
+              if (cmpVersion(installed, targetSemver) >= 0) {
+                return { ok: true };
+              }
+            }
+          }
+        } catch (_) {
+          // /info unreachable → service is restarting. Update banner to reflect.
+          if (lastState !== 'restarting' && !saw200) {
+            ubStatus.textContent = 'service is restarting…';
+            setProgress('indet', true);
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 1000));
       }
-      return false;
+      return { ok: false, message: 'timed out waiting for new version' };
     }
 
     ubUpgrade.addEventListener('click', async () => {
@@ -561,6 +658,7 @@ internal static class IndexPage
       ubActions.querySelectorAll('a, button').forEach(el => el.setAttribute('disabled', 'true'));
       ubUpgrade.textContent = 'Working…';
       ubStatus.textContent = 'requesting upgrade…';
+      setProgress('indet', true);
       try {
         const res = await fetch('/upgrade', {
           method: 'POST',
@@ -570,22 +668,25 @@ internal static class IndexPage
         if (!res.ok) {
           const body = await res.text();
           ubStatus.textContent = `server returned ${res.status}: ${body.slice(0, 200)}`;
+          setProgress(0, false);
           ubUpgrade.textContent = 'Retry';
           ubActions.querySelectorAll('a, button').forEach(el => el.removeAttribute('disabled'));
           return;
         }
-        ubStatus.textContent = 'downloading on server… service will restart shortly';
-        const ok = await pollForVersion(targetSemver);
-        if (ok) {
+        const result = await pollUpgrade(targetSemver);
+        if (result.ok) {
           ubStatus.textContent = 'done — reloading';
+          setProgress(100, true);
           setTimeout(() => location.reload(), 1000);
         } else {
-          ubStatus.textContent = 'timeout — check /logs and service status manually';
+          ubStatus.textContent = result.message ?? 'upgrade did not complete; check /logs';
+          setProgress(0, false);
           ubUpgrade.textContent = 'Retry';
           ubActions.querySelectorAll('a, button').forEach(el => el.removeAttribute('disabled'));
         }
       } catch (e) {
         ubStatus.textContent = `error: ${e.message}`;
+        setProgress(0, false);
         ubUpgrade.textContent = 'Retry';
         ubActions.querySelectorAll('a, button').forEach(el => el.removeAttribute('disabled'));
       }

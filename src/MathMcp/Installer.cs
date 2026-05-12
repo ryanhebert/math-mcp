@@ -172,6 +172,9 @@ public static class Installer
         Console.WriteLine("Granting service account access to install dir...");
         GrantInstallDirAccess();
 
+        Console.WriteLine("Granting service account permission to start/stop its own service...");
+        GrantServiceSelfControl();
+
         Console.WriteLine("Configuring Windows Firewall rules...");
         ConfigureFirewall(config.HttpPort, config.HttpsPort);
 
@@ -445,6 +448,72 @@ public static class Installer
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Could not create Event Log source '{ServiceName}': {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Grants the virtual service account `SERVICE_START` + `SERVICE_STOP` +
+    /// `SERVICE_QUERY_STATUS` on its own service. Required by the in-UI
+    /// self-upgrade flow — the helper batch (which runs as the service
+    /// account) needs to <c>sc stop MathMcp</c> the old binary and
+    /// <c>sc start MathMcp</c> the new one. Without this, the default
+    /// Windows service DACL doesn't grant the service account those rights
+    /// and the helper hangs forever in its wait-for-exit loop.
+    /// </summary>
+    private static void GrantServiceSelfControl()
+    {
+        // Step 1 — get the virtual account's SID.
+        var (showSidExit, showSidStdout, _) = Run("sc.exe", new[] { "showsid", ServiceName });
+        if (showSidExit != 0)
+        {
+            Console.Error.WriteLine($"  sc showsid exit {showSidExit}; skipping SCM grant.");
+            return;
+        }
+        var sidMatch = System.Text.RegularExpressions.Regex.Match(
+            showSidStdout, @"SERVICE SID:\s+(S-[\d\-]+)");
+        if (!sidMatch.Success)
+        {
+            Console.Error.WriteLine("  could not parse service SID from sc showsid; skipping SCM grant.");
+            return;
+        }
+        var sid = sidMatch.Groups[1].Value;
+
+        // Step 2 — read the current DACL (SDDL string).
+        var (showDaclExit, showDaclStdout, _) = Run("sc.exe", new[] { "sdshow", ServiceName });
+        if (showDaclExit != 0)
+        {
+            Console.Error.WriteLine($"  sc sdshow exit {showDaclExit}; skipping SCM grant.");
+            return;
+        }
+        var dacl = showDaclStdout.Trim();
+        if (string.IsNullOrEmpty(dacl) || !dacl.StartsWith("D:", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine("  unexpected DACL format from sc sdshow; skipping SCM grant.");
+            return;
+        }
+
+        // Step 3 — insert our ACE (idempotent: skip if it's already there).
+        // LC = SERVICE_QUERY_STATUS, RP = SERVICE_START, WP = SERVICE_STOP
+        var newAce = $"(A;;LCRPWP;;;{sid})";
+        if (dacl.Contains(newAce, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("  ACE already present; skipping.");
+            return;
+        }
+        // Insert the ACE before the SACL (S:) section if present, otherwise
+        // append to the DACL string.
+        var sIdx = dacl.IndexOf("S:", StringComparison.Ordinal);
+        var newDacl = sIdx > 0
+            ? dacl.Substring(0, sIdx) + newAce + dacl.Substring(sIdx)
+            : dacl + newAce;
+
+        // Step 4 — apply.
+        var (setExit, setStdout, setStderr) = Run("sc.exe", new[] { "sdset", ServiceName, newDacl });
+        if (setExit != 0)
+        {
+            Console.Error.WriteLine($"  sc sdset exit {setExit}");
+            if (!string.IsNullOrWhiteSpace(setStdout)) Console.Error.WriteLine($"    stdout: {setStdout}");
+            if (!string.IsNullOrWhiteSpace(setStderr)) Console.Error.WriteLine($"    stderr: {setStderr}");
         }
     }
 

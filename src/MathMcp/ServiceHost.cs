@@ -491,6 +491,25 @@ public static class ServiceHost
     // service is about to exit anyway.
     private static int _upgradeInFlight;
 
+    /// <summary>
+    /// Shared upgrade-pipeline state for <c>/upgrade/status</c>. Mutated only
+    /// from the background <see cref="Task.Run"/> in the upgrade handler; the
+    /// status endpoint reads it. Plain mutable fields are fine here — the
+    /// occasional torn read (e.g., "downloading" state with stale bytes count)
+    /// is harmless polling noise that smooths out on the next tick.
+    /// </summary>
+    public sealed class UpgradeStatus
+    {
+        public string State { get; set; } = "idle";       // idle | downloading | staged | restarting | done | failed
+        public string? Message { get; set; }
+        public string? TargetVersion { get; set; }
+        public string? StartedAtIso { get; set; }
+        public long? BytesDownloaded { get; set; }
+        public long? BytesTotal { get; set; }
+    }
+
+    private static readonly UpgradeStatus _upgradeStatus = new();
+
     private static void MapUpgradeEndpoint(WebApplication app)
     {
         // POST /upgrade — downloads a newer MathMcp.exe from GitHub, writes a
@@ -554,6 +573,13 @@ public static class ServiceHost
             var installedExePath = Installer.InstalledExePath;
             var failMarker     = Path.Combine(Installer.InstallDir, "upgrade-failed.txt");
 
+            _upgradeStatus.State           = "downloading";
+            _upgradeStatus.Message         = null;
+            _upgradeStatus.TargetVersion   = version;
+            _upgradeStatus.StartedAtIso    = DateTime.UtcNow.ToString("O");
+            _upgradeStatus.BytesDownloaded = 0;
+            _upgradeStatus.BytesTotal      = null;
+
             _ = Task.Run(async () =>
             {
                 var clearLock = true;
@@ -569,18 +595,54 @@ public static class ServiceHost
                     http.DefaultRequestHeaders.UserAgent.ParseAdd($"MathMcp-Upgrade/{asmVersion}");
 
                     logger.LogInformation("Downloading {Url}", downloadUrl);
-                    var bytes = await http.GetByteArrayAsync(downloadUrl);
 
-                    if (bytes.Length < 1_000_000 || bytes[0] != (byte)'M' || bytes[1] != (byte)'Z')
+                    // Stream the download so we can report byte-level progress
+                    // to anyone polling /upgrade/status.
+                    using var response = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+                    response.EnsureSuccessStatusCode();
+                    _upgradeStatus.BytesTotal = response.Content.Headers.ContentLength;
+
+                    long downloaded = 0;
+                    using (var fileStream = File.Create(newExePath))
+                    using (var netStream = await response.Content.ReadAsStreamAsync())
                     {
-                        logger.LogError(
-                            "Downloaded artifact rejected: invalid PE (size={Size}, header={H0:X2}{H1:X2})",
-                            bytes.Length, bytes.Length > 0 ? bytes[0] : 0, bytes.Length > 1 ? bytes[1] : 0);
-                        return;
+                        var buffer = new byte[81920];
+                        int read;
+                        while ((read = await netStream.ReadAsync(buffer)) > 0)
+                        {
+                            await fileStream.WriteAsync(buffer.AsMemory(0, read));
+                            downloaded += read;
+                            _upgradeStatus.BytesDownloaded = downloaded;
+                        }
                     }
 
-                    await File.WriteAllBytesAsync(newExePath, bytes);
-                    logger.LogInformation("Wrote {Bytes} bytes to {Path}", bytes.Length, newExePath);
+                    // Verify the downloaded file: size + PE "MZ" magic. Anything
+                    // smaller than 1 MB or missing the header is rejected.
+                    var fileInfo = new FileInfo(newExePath);
+                    if (fileInfo.Length < 1_000_000)
+                    {
+                        _upgradeStatus.State = "failed";
+                        _upgradeStatus.Message = $"downloaded file too small ({fileInfo.Length} bytes)";
+                        logger.LogError("Downloaded artifact rejected: size={Size}", fileInfo.Length);
+                        TryDelete(newExePath);
+                        return;
+                    }
+                    using (var fs = File.OpenRead(newExePath))
+                    {
+                        var sig = new byte[2];
+                        fs.ReadExactly(sig);
+                        if (sig[0] != (byte)'M' || sig[1] != (byte)'Z')
+                        {
+                            _upgradeStatus.State = "failed";
+                            _upgradeStatus.Message = $"downloaded file is not a Windows executable (header={sig[0]:X2}{sig[1]:X2})";
+                            logger.LogError("Downloaded artifact rejected: bad PE header {H0:X2}{H1:X2}", sig[0], sig[1]);
+                            TryDelete(newExePath);
+                            return;
+                        }
+                    }
+
+                    logger.LogInformation("Wrote {Bytes} bytes to {Path}", fileInfo.Length, newExePath);
+                    _upgradeStatus.State = "staged";
 
                     // Helper batch: stops the service, waits for the .exe file to
                     // be unlocked, retries the swap up to 10× (handles antivirus
@@ -624,11 +686,14 @@ public static class ServiceHost
                     logger.LogInformation(
                         "Upgrade helper spawned (PID {Pid}). Service stop will follow in ~3s.",
                         p?.Id);
+                    _upgradeStatus.State = "restarting";
                     clearLock = false; // We got far enough; lock stays set until process dies.
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Upgrade pipeline failed");
+                    _upgradeStatus.State = "failed";
+                    _upgradeStatus.Message = ex.Message;
                 }
                 finally
                 {
@@ -640,9 +705,22 @@ public static class ServiceHost
             {
                 status = "initiated",
                 target_version = version,
-                note = "Watch /info — the 'version' field will change when the new binary is running.",
+                note = "Poll /upgrade/status for progress; /info for the new version.",
             }, statusCode: 202);
         });
+
+        // Live progress for the in-UI upgrade. Reported state transitions:
+        //   idle → downloading → staged → restarting → (process exits)
+        // After the new service comes up, this returns to idle.
+        app.MapGet("/upgrade/status", () => Results.Json(new
+        {
+            state = _upgradeStatus.State,
+            message = _upgradeStatus.Message,
+            target_version = _upgradeStatus.TargetVersion,
+            started_at = _upgradeStatus.StartedAtIso,
+            bytes_downloaded = _upgradeStatus.BytesDownloaded,
+            bytes_total = _upgradeStatus.BytesTotal,
+        }));
     }
 
     private static void TryDelete(string path)

@@ -2,6 +2,16 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.16] — 2026-05-12
+
+### Fixed
+- **In-UI upgrade actually works now.** v1.0.14/15's helper batch couldn't `sc stop` / `sc start` the service because the virtual service account doesn't get `SERVICE_START`/`SERVICE_STOP` rights by default. Installer now grants them explicitly via `sc sdset`. Upgrading from v1.0.14/15 still requires one manual install of v1.0.16 (admin command prompt → `MathMcp-v1.0.16.exe --auth`); after that, the dashboard's "Upgrade now" button works end-to-end.
+- **Unrecognized bearers fall through as anonymous** instead of returning 401. The v1.0.13 challenge-with-discovery-URLs approach is correct per spec but doesn't help in practice when the upstream gateway ignores `WWW-Authenticate` and just forwards stale or foreign credentials. The new behavior matches the original mixed-mode design intent (any of the three flows should work). Diagnostic prefix logging is preserved (`[WRN] presented=eyJ... (len=1211) — falling through as anonymous`) so misconfigured clients are still visible without breaking the request flow.
+
+### Added
+- **Granular upgrade progress.** `/upgrade/status` reports the current step: `idle → downloading → staged → restarting → done | failed`. While `downloading`, `bytes_downloaded` and `bytes_total` are reported per buffer write (streamed from the GitHub redirect target). The dashboard banner gains a progress bar that follows the real byte count, then switches to an indeterminate animation during the brief `staged → restarting` window.
+- **Helper script writes a fail marker** (`upgrade-failed.txt`) the next service start surfaces as a warning, so unrecoverable swaps are visible after the fact.
+
 ## [v1.0.15] — 2026-05-12
 
 Hardening pass following the post-v1.0.14 code review. Items deferred for

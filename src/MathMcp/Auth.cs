@@ -117,10 +117,18 @@ public sealed class AuthMiddleware
             return;
         }
 
+        // Mixed-mode test server: when a bearer is presented but we don't
+        // recognize it, fall through as anonymous. This matches the original
+        // design intent ("any of these three should work") and accommodates
+        // upstream gateways that forward stale or foreign Authorization
+        // headers — e.g., a JWT from an unrelated identity in a misconfigured
+        // 'no auth' gateway mode. The bearer prefix is still logged for
+        // diagnostics so misconfigured clients are visible without breaking
+        // the request flow.
         _logger.LogWarning(
-            "Token check on /mcp → 401 invalid_token — presented={Preview} re-auth instructions sent in WWW-Authenticate",
+            "Token check on /mcp → unrecognized bearer presented={Preview} — falling through as anonymous",
             Truncate(presented));
-        await WriteUnauthorized(context, "invalid_token", "bearer token not recognized");
+        await _next(context);
     }
 
     /// <summary>
