@@ -331,12 +331,21 @@ public static class Installer
     }
 
     /// <summary>
-    /// Stops and removes any existing MathMcp service. Returns true on success or
-    /// when no service exists; returns false if the service is stuck and the user
-    /// needs manual intervention (e.g., close services.msc, then reboot).
+    /// Stops and removes any existing MathMcp service, plus any stray
+    /// MathMcp processes and leftover upgrade artefacts. Returns true on
+    /// success or when no service exists; returns false if the service is
+    /// stuck and the user needs manual intervention (e.g., close
+    /// services.msc, then reboot).
     /// </summary>
     private static bool StopAndRemoveExistingService()
     {
+        // Always sweep for stray MathMcp processes and orphan upgrade
+        // artefacts before doing anything else. Catches:
+        //   - run-foreground debug instances (`MathMcp.exe run`)
+        //   - stuck upgrade-helper batches from a prior failed in-UI upgrade
+        //   - half-staged MathMcp.exe.new files that would race with us
+        SweepStrayProcessesAndArtefacts();
+
         if (!ServiceExists())
         {
             return true;
@@ -350,6 +359,12 @@ public static class Installer
             ForceKillServiceProcesses();
             // Give SCM a moment to notice the process is gone.
             Thread.Sleep(2000);
+        }
+        else
+        {
+            // sc stop succeeded, but kill any non-service MathMcp processes
+            // that may have been launched outside SCM (e.g., foreground debug).
+            ForceKillServiceProcesses();
         }
 
         Console.WriteLine("Removing service registration...");
@@ -370,6 +385,67 @@ public static class Installer
         }
 
         return true;
+    }
+
+    private static void SweepStrayProcessesAndArtefacts()
+    {
+        // Kill any non-self MathMcp.exe processes (foreground debug or
+        // orphan service processes).
+        try
+        {
+            var stray = Process.GetProcessesByName("MathMcp")
+                .Where(p => p.Id != Environment.ProcessId)
+                .ToList();
+            if (stray.Count > 0)
+            {
+                Console.WriteLine($"Cleaning up {stray.Count} stray MathMcp process(es)...");
+                foreach (var p in stray)
+                {
+                    try
+                    {
+                        Console.WriteLine($"  killing PID {p.Id} ({p.ProcessName})");
+                        p.Kill(entireProcessTree: true);
+                        p.WaitForExit(5000);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"  could not kill PID {p.Id}: {ex.Message}");
+                    }
+                    finally
+                    {
+                        p.Dispose();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Process sweep failed: {ex.Message}");
+        }
+
+        // Delete leftover upgrade staging files. These can be left behind
+        // when a /upgrade attempt didn't complete (e.g., the helper
+        // batch's `sc stop` failed in v1.0.14/15 because the service
+        // account lacked SCM permissions, leaving a stuck cmd.exe and a
+        // ~94MB MathMcp.exe.new in the install dir).
+        var newExe = Path.Combine(InstallDir, "MathMcp.exe.new");
+        var helper = Path.Combine(InstallDir, "upgrade-helper.cmd");
+        var marker = Path.Combine(InstallDir, "upgrade-failed.txt");
+        foreach (var path in new[] { newExe, helper, marker })
+        {
+            if (File.Exists(path))
+            {
+                try
+                {
+                    Console.WriteLine($"  removing leftover {Path.GetFileName(path)}");
+                    File.Delete(path);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"  could not remove {path}: {ex.Message}");
+                }
+            }
+        }
     }
 
     private static void ForceKillServiceProcesses()

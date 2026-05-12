@@ -129,17 +129,15 @@ public static class ServiceHost
                 app.Use(async (context, next) =>
                 {
                     if (context.Connection.LocalPort == 80 &&
-                        !context.Request.Path.StartsWithSegments("/token") &&
-                        !context.Request.Path.StartsWithSegments("/.well-known") &&
-                        !context.Request.Path.StartsWithSegments("/favicon"))
+                        !context.Request.Path.StartsWithSegments("/token"))
                     {
                         context.Response.StatusCode = StatusCodes.Status404NotFound;
                         context.Response.ContentType = "text/plain; charset=utf-8";
                         await context.Response.WriteAsync(
-                            "Port 80 on this server is reserved for the OAuth /token endpoint " +
-                            "and OAuth discovery (/.well-known/...). Other endpoints are available " +
-                            $"on http://<host>:{config.HttpPort}/ (HTTP) " +
-                            $"and https://<host>:{config.HttpsPort}/ (HTTPS).");
+                            "Port 80 on this server serves only the OAuth /token endpoint. " +
+                            "Everything else (dashboard, /mcp, /logs, /.well-known/*, etc.) " +
+                            $"is available on http://<host>:{config.HttpPort}/ (HTTP) and " +
+                            $"https://<host>:{config.HttpsPort}/ (HTTPS).");
                         return;
                     }
                     await next();

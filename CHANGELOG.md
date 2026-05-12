@@ -2,6 +2,18 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.17] — 2026-05-12
+
+### Changed
+- **Port 80 is now strictly `/token`-only.** Previously the port-80 filter also allowed `/.well-known/*` (OAuth discovery) and `/favicon*` through. Now anything on port 80 except `/token` returns 404. Discovery and dashboard all stay on the configured HTTP/HTTPS ports.
+- **Port-80 probe now retries up to 5 times** with a 1 s gap between attempts. Handles the TIME_WAIT case where a recent service stop left the port pinned for a few seconds before becoming bindable. Previously the probe gave up immediately and the new service started without binding port 80 even when it would have been available a moment later.
+
+### Fixed
+- **Install sweeps stray `MathMcp.exe` processes** before doing anything else — not only when `sc stop` fails. Catches:
+  - Foreground debug instances (`MathMcp.exe run`)
+  - Stuck `upgrade-helper.cmd` batches left over from a prior failed in-UI upgrade (v1.0.14/15)
+- **Install removes leftover upgrade staging files** (`MathMcp.exe.new`, `upgrade-helper.cmd`, `upgrade-failed.txt`) so a fresh upgrade can never race with a stuck helper.
+
 ## [v1.0.16] — 2026-05-12
 
 ### Fixed
