@@ -7,6 +7,8 @@ using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
 using Serilog;
 using Serilog.Events;
@@ -96,8 +98,50 @@ public static class ServiceHost
                 builder.Services.AddSingleton(tokenStore);
             }
 
+            // Wire WithHttpTransport with a RunSessionHandler so we can log
+            // when each MCP session starts and ends. The SDK's built-in
+            // StatefulSessionManager already emits an INFO line on idle-timeout
+            // and MaxIdleSessionCount eviction; this hook adds the matching
+            // start/end pair so a log reader can correlate session lifetime
+            // with the request lines flowing in the same time window.
             builder.Services.AddMcpServer()
-                .WithHttpTransport()
+                .WithHttpTransport(options =>
+                {
+                    // MCPEXP002: RunSessionHandler is marked experimental in
+                    // the C# SDK. We accept the API-stability risk: the hook
+                    // is the only way to log per-session start/end, and the
+                    // fallback (lose the visibility) costs more than the
+                    // upgrade churn if the signature ever changes.
+#pragma warning disable MCPEXP002
+                    options.RunSessionHandler = async (ctx, mcp, ct) =>
+                    {
+                        var log = ctx.RequestServices
+                            .GetRequiredService<ILoggerFactory>()
+                            .CreateLogger("MathMcp.Session");
+                        // The SDK sets the Mcp-Session-Id response header
+                        // before invoking us, so read it from the response —
+                        // the request header is empty on the initial init.
+                        var sid = ctx.Response.Headers["Mcp-Session-Id"].ToString();
+                        var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "-";
+                        var host = ctx.Request.Host.Value ?? "-";
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        log.LogInformation(
+                            "MCP session started: id={SessionId} host={Host} ip={Ip}",
+                            sid, host, ip);
+                        try
+                        {
+                            await mcp.RunAsync(ct);
+                        }
+                        finally
+                        {
+                            sw.Stop();
+                            log.LogInformation(
+                                "MCP session ended: id={SessionId} host={Host} ip={Ip} duration={DurationSeconds}s",
+                                sid, host, ip, (long)sw.Elapsed.TotalSeconds);
+                        }
+                    };
+#pragma warning restore MCPEXP002
+                })
                 .WithToolsFromAssembly()
                 .WithPromptsFromAssembly()
                 .WithResourcesFromAssembly();
@@ -133,6 +177,22 @@ public static class ServiceHost
                     "Clients that pinned the old fingerprint will need to refresh.",
                     prevExpiry, cert.NotAfter.ToString("yyyy-MM-dd"));
             }
+
+            // MCP session state is in-memory only. Announce that here so an
+            // operator reading the log after a restart can correlate the
+            // wave of `GET /mcp → 404 / "session not found"` rows that
+            // follow with the cause (this startup), instead of treating
+            // them as a real fault. Also surface the SDK's idle-sweep
+            // settings so the same operator knows when sessions get dropped
+            // during steady-state operation.
+            var mcpOptions = app.Services
+                .GetRequiredService<IOptions<HttpServerTransportOptions>>().Value;
+            startupLogger.LogInformation(
+                "MCP session store reset (in-memory only). " +
+                "Clients holding a stale Mcp-Session-Id from a prior process " +
+                "will see GET/DELETE /mcp → 404 (-32001) until they re-initialize. " +
+                "Idle sweep: IdleTimeout={IdleTimeout}, MaxIdleSessionCount={MaxIdle}.",
+                mcpOptions.IdleTimeout, mcpOptions.MaxIdleSessionCount);
 
             CleanupStaleUpgradeArtefacts(startupLogger);
 

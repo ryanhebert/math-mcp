@@ -2,6 +2,53 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.23] — 2026-05-13
+
+Observability pass around MCP session lifecycle. No behavior change for
+clients — entirely about making "why am I seeing `GET /mcp → 404`"
+trivial to answer from the dashboard and log without reading SDK source.
+
+### Added
+- **Per-session start/end log lines** via the MCP SDK's
+  `HttpServerTransportOptions.RunSessionHandler` hook (experimental SDK
+  API, MCPEXP002 suppressed locally with a comment explaining why):
+  - `MCP session started: id={SessionId} host={Host} ip={Ip}`
+  - `MCP session ended: id={SessionId} host={Host} ip={Ip} duration={N}s`
+
+  Combined with the SDK's existing `StatefulSessionManager` INFO lines
+  (`IdleTimeout of {…} exceeded. Closing idle session {…}` and the
+  `MaxIdleSessionCount` eviction line), the operator can now correlate a
+  404 with either an explicit session end, an idle sweep, or a service
+  restart.
+- **Startup announces MCP session-store reset + idle-sweep settings.**
+  After a deploy / service restart, the log carries:
+
+  `MCP session store reset (in-memory only). Clients holding a stale
+  Mcp-Session-Id from a prior process will see GET/DELETE /mcp → 404
+  (-32001) until they re-initialize. Idle sweep: IdleTimeout=02:00:00,
+  MaxIdleSessionCount=10000.`
+
+  So the wave of 404s that follows every release is now visibly
+  attributed in the log instead of looking like a fault.
+- **Dashboard `/requests` distinguishes "session not found" 404s.** The
+  `RequestLogMiddleware` checks status + `Mcp-Session-Id` header
+  presence; when GET/DELETE /mcp returns 404 with a session header, the
+  row's `args` reads `session not found (stale Mcp-Session-Id)` instead
+  of the generic `—`.
+
+### Known causes of `GET /mcp → 404`
+For reference, all three are now observable from the log + dashboard
+without code changes on the server:
+1. Service restart wipes the in-memory session map — surfaced by the
+   new startup line.
+2. SDK idle-sweep evicts sessions after `IdleTimeout` (2 h default) —
+   surfaced by the SDK's existing `StatefulSessionManager` INFO line.
+3. Upstream proxy (Cisco AI Gateway / Cloudflare / Envoy) recycles its
+   persistent connection to the origin and the next hop's first GET
+   reuses an old session header — externally driven; no server-side fix,
+   but the `session not found` label in `/requests` now makes the
+   pattern obvious at a glance.
+
 ## [v1.0.22] — 2026-05-13
 
 ### Added

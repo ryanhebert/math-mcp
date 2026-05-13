@@ -71,6 +71,11 @@ public sealed class RequestLogMiddleware
         var (jsonRpcMethod, args) = await TryParseJsonRpc(context);
         context.Request.Body.Position = 0;
 
+        // Capture session header up front: the MCP SDK reads + may consume it
+        // before we get back here.
+        var sessionId = context.Request.Headers["Mcp-Session-Id"].ToString();
+        var hasSessionId = !string.IsNullOrEmpty(sessionId);
+
         await _next(context);
         sw.Stop();
 
@@ -92,6 +97,17 @@ public sealed class RequestLogMiddleware
         else
         {
             method = $"{httpMethod} {pathStr}";
+        }
+
+        // Annotate the SDK's canonical "session not found" path: a GET or
+        // DELETE on /mcp with an Mcp-Session-Id we don't have in memory
+        // returns 404 + JSON-RPC -32001. Without this label these rows look
+        // identical to any other 404 in the dashboard.
+        if (status == StatusCodes.Status404NotFound &&
+            hasSessionId &&
+            string.IsNullOrEmpty(jsonRpcMethod))
+        {
+            args = "session not found (stale Mcp-Session-Id)";
         }
 
         var host = context.Request.Host.Value ?? "";
