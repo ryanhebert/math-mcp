@@ -131,6 +131,28 @@ public sealed class AuthMiddleware
 
         var presented = header.Substring("Bearer ".Length).Trim();
 
+        // Prefix-aware: only enforce strict 401 for bearers shaped like *our*
+        // tokens (mm_st_ = static, mm_at_ = OAuth-issued). Foreign-shaped
+        // bearers — Cisco Secure Access user-identity JWTs, Cloudflare Access
+        // service tokens, Envoy upstream identity headers, etc. — are
+        // forwarded by identity-aware proxies even on routes the operator
+        // configured for "no auth". Rejecting those breaks the proxy's
+        // "no auth" route the moment we start advertising OAuth discovery
+        // upstream. Treating them as anonymous keeps those routes working
+        // while still letting integrators exercise our 401 path with a
+        // wrong-value mm_st_ / mm_at_ token. (Note: the prefixes are public
+        // — published on / and in /info — so the early branch leaks nothing.)
+        var isOurs = presented.StartsWith("mm_st_", StringComparison.Ordinal)
+                  || presented.StartsWith("mm_at_", StringComparison.Ordinal);
+        if (!isOurs)
+        {
+            _logger.LogWarning(
+                "Token check on /mcp → allow (foreign-shaped bearer, treating as anonymous) presented={Preview}",
+                Truncate(presented));
+            await _next(context);
+            return;
+        }
+
         var staticToken = _config.BearerToken ?? string.Empty;
         if (!string.IsNullOrEmpty(staticToken) &&
             CryptographicOperations.FixedTimeEquals(

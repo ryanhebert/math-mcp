@@ -2,6 +2,32 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.24] — 2026-05-13
+
+### Fixed
+- **Prefix-aware bearer validation.** Restores compatibility with
+  upstream identity-aware proxies (Cisco Secure Access AI Gateway,
+  Cloudflare Access, etc.) that inject the *client's* identity JWT on
+  egress even when their route is configured for "auth none" toward the
+  upstream. Before `--auth` shipped these proxies passed through cleanly
+  because we advertised no OAuth surface; once `--auth` exposed
+  `/.well-known/oauth-authorization-server`, the proxies' OAuth-discovery
+  override kicked in and they began forwarding a foreign JWT, which the
+  v1.0.19 strict-401 path then rejected. New rule:
+  - Bearer starts with `mm_st_` (our static-token prefix) → validated
+    strictly. Wrong value → 401, as before.
+  - Bearer starts with `mm_at_` (our OAuth-issued prefix) → validated
+    against the in-memory token store. Wrong/expired → 401, as before.
+  - Bearer has any other shape → treated as a foreign proxy-injected
+    token, logged at WARN, request proceeds anonymously.
+
+  Net effect: integrators can still exercise the 401 rejection path
+  with `Bearer mm_st_wrong` (right prefix, wrong value), and anonymous
+  requests still work, but proxies' "auth none" routes stop breaking
+  the moment we advertise OAuth. The prefix list is public (printed on
+  the dashboard and in `/info`), so the early branch doesn't leak
+  anything that wasn't already documented.
+
 ## [v1.0.23] — 2026-05-13
 
 Observability pass around MCP session lifecycle. No behavior change for
