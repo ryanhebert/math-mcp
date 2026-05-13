@@ -12,30 +12,11 @@ under the version that fixed it.
 
 ## Bugs (deferred)
 
-### B6 — WWW-Authenticate header built via string concat
-`Auth.cs:WriteUnauthorized` interpolates `error` directly into the
-`WWW-Authenticate: Bearer error="..."` value. Today `error` is always a
-hardcoded RFC token ("invalid_token", "invalid_request"), but a future
-caller passing user input would break the challenge header. **Fix:**
-validate `error` against an allow-list, or use a proper builder.
-
-### B7 — `/info` lies about `tokenPort` when auth is disabled
-`ServiceHost.MapInfoEndpoints` exposes `ports.tokenPort` unconditionally.
-When auth is off there is no `/token` endpoint, so the field is meaningless.
-**Fix:** wrap inside the `auth.Enabled` conditional.
-
 ### B8 — `/.well-known/openid-configuration` returns RFC 8414 content, not OIDC
 We alias OIDC discovery to the OAuth Authorization Server metadata doc,
 which lacks OIDC-required fields (`authorization_endpoint`, `userinfo_endpoint`,
 `jwks_uri`, …). Strict OIDC clients reject our doc. **Fix:** either remove
 the alias or stub the missing fields.
-
-### B9 — TokenStore is unbounded
-`Auth.TokenStore` only sweeps on `IsValid` / `Count` reads. A burst of
-`/token` calls followed by silence keeps issued tokens resident until TTL
-expires. A misbehaving client looping `/token` can balloon memory.
-**Fix:** background timer for periodic sweep, or cap dictionary size and
-evict oldest.
 
 ### B11 — `/upgrade` is unauthenticated + CORS allows any origin
 `ServiceHost.cs` mounts `POST /upgrade` with no auth gate, and CORS is
@@ -48,14 +29,6 @@ but the CSRF + LAN-reachable surface is more exposed than the prose
 implies. **Fix:** require either the static bearer or an admin-only
 local-loopback check on `/upgrade` (independent of the `/mcp` auth flag),
 and/or restrict CORS for that endpoint to the same origin.
-
-### B14 — `TokenStore.SweepExpired` runs O(N) on every auth check
-`Auth.cs` `IsValid` / `Count` invoke `SweepExpired` which scans the
-entire dictionary. Under any real bearer-token volume this is wasted CPU
-per request; under a flood of bogus bearers it's an amplification vector.
-(Related to existing B9 — combine the fixes: move sweep to a periodic
-timer, cap dictionary size.) **Fix:** background `Timer` that sweeps
-every TTL/4 seconds; drop the per-request sweep.
 
 ### B15 — Self-signed PFX written without a password
 `CertificateProvider.cs` `cert.Export(X509ContentType.Pfx)` with no

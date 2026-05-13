@@ -2,6 +2,36 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.21] — 2026-05-13
+
+Second backlog polish pass: low-risk cleanups, no user-visible behavior
+change beyond `/info` shape and `/token` issuance characteristics.
+
+### Fixed
+- **`TokenStore` no longer scans the whole map on every auth check.** A
+  60 s background `Timer` sweeps expired tokens; the hot path (`IsValid`)
+  just does a dictionary lookup + expiry compare. Issuance caps the map
+  at 10 000 tokens and evicts the soonest-to-expire batch on overflow,
+  so a misbehaving client looping `/token` can no longer balloon memory.
+  (B9 + B14)
+- **Installer's `Run(file, args)` reads stdout and stderr concurrently.**
+  Sequential `ReadToEnd` deadlocks if the child fills the stderr pipe
+  buffer (~4 KB on Windows) while we're still draining stdout. Today's
+  callers (`sc`/`netsh`/`icacls`) have tiny output so it never fires,
+  but the pattern was wrong and the first verbose child would expose it.
+
+### Changed
+- **`/info.ports.tokenPort` is omitted when auth is disabled.** With auth
+  off there's no `/token` endpoint, so surfacing the port was misleading.
+  Dashboards and clients now only see `ports = { http, https }` in that
+  case. (B7)
+- **`WriteUnauthorized` allow-lists the `error` token.** RFC 6750 §6.2
+  defines the three valid Bearer error codes (`invalid_request`,
+  `invalid_token`, `insufficient_scope`); anything else is collapsed to
+  `invalid_request` at the boundary. Today's callers always pass a valid
+  token — this just hardens the header against future caller mistakes
+  injecting syntax into the challenge value. (B6)
+
 ## [v1.0.20] — 2026-05-13
 
 Backlog polish pass: closes the remaining items from the v1.0.18 code

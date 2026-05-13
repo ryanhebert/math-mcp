@@ -326,6 +326,13 @@ public static class ServiceHost
             return Results.Content(IndexPage.Render(pageModel), "text/html; charset=utf-8");
         });
 
+        // tokenPort is only meaningful when auth is enabled (otherwise
+        // /token isn't mapped at all). Hide it in the auth-off case so
+        // dashboard/clients don't see a port that resolves to nothing.
+        object portsObj = config.Auth?.Enabled == true
+            ? new { http = config.HttpPort, https = config.HttpsPort, tokenPort }
+            : new { http = config.HttpPort, https = config.HttpsPort };
+
         app.MapGet("/info", () => Results.Json(new
         {
             service = "Math MCP Server",
@@ -333,7 +340,7 @@ public static class ServiceHost
             status = "running",
             startedAt = StartedAtUtc.ToString("O"),
             uptimeSeconds = (long)(DateTime.UtcNow - StartedAtUtc).TotalSeconds,
-            ports = new { http = config.HttpPort, https = config.HttpsPort, tokenPort },
+            ports = portsObj,
             host = new { machine = Environment.MachineName, fqdn },
             mcpEndpoint = "/mcp",
             tools,

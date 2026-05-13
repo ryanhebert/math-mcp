@@ -810,10 +810,16 @@ public static class Installer
         foreach (var a in args) psi.ArgumentList.Add(a);
 
         using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
+        // Read stdout and stderr concurrently. Sequential reads can deadlock
+        // when a child fills the pipe buffer (~4 KB on Windows) on the second
+        // stream while we're still draining the first. sc/netsh/icacls have
+        // small output so this never fires today, but the pattern is wrong
+        // and would break the first time a verbose child is added.
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+        Task.WaitAll(stdoutTask, stderrTask);
         p.WaitForExit();
-        return (p.ExitCode, stdout, stderr);
+        return (p.ExitCode, stdoutTask.Result, stderrTask.Result);
     }
 
     private static bool PathsEqual(string a, string b) =>

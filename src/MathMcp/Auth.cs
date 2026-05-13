@@ -22,27 +22,38 @@ public static class CredentialGenerator
             .Replace('/', '_');
 }
 
-public sealed class TokenStore
+public sealed class TokenStore : IDisposable
 {
+    // Sweep cadence is independent of TTL because Issue takes per-call TTL.
+    // 60 s keeps expired entries from lingering long after they go stale
+    // without burning CPU on the auth path. The cap is generous — a real
+    // burst of issuance still works, it just bounds worst-case memory.
+    private const int MaxTokens = 10_000;
+    private const int EvictBatch = 100;
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(60);
+
     private readonly ConcurrentDictionary<string, DateTime> _tokens = new();
+    private readonly Timer _sweepTimer;
+
+    public TokenStore()
+    {
+        _sweepTimer = new Timer(_ => SweepExpired(), null, SweepInterval, SweepInterval);
+    }
 
     public string Issue(TimeSpan ttl)
     {
         var token = CredentialGenerator.NewSecret(32, "mm_at_");
         _tokens[token] = DateTime.UtcNow.Add(ttl);
+        if (_tokens.Count > MaxTokens) EvictOldest();
         return token;
     }
 
-    public bool IsValid(string token)
-    {
-        SweepExpired();
-        return _tokens.TryGetValue(token, out var expiry) && expiry > DateTime.UtcNow;
-    }
+    // Hot path: no sweep. The Timer keeps the dictionary trimmed; if a token
+    // lingers a few seconds past expiry we still reject it here.
+    public bool IsValid(string token) =>
+        _tokens.TryGetValue(token, out var expiry) && expiry > DateTime.UtcNow;
 
-    public int Count
-    {
-        get { SweepExpired(); return _tokens.Count; }
-    }
+    public int Count => _tokens.Count;
 
     private void SweepExpired()
     {
@@ -52,6 +63,27 @@ public sealed class TokenStore
             if (kv.Value <= now) _tokens.TryRemove(kv.Key, out _);
         }
     }
+
+    /// <summary>
+    /// Drops the soonest-to-expire entries when the dictionary exceeds
+    /// <see cref="MaxTokens"/>. Drops a small batch beyond the threshold to
+    /// amortize the cost of the next overflow. Soonest-expiring entries are
+    /// also the oldest issuances when TTLs are uniform, which matches the
+    /// intent: oldest creds go first.
+    /// </summary>
+    private void EvictOldest()
+    {
+        var overflow = _tokens.Count - MaxTokens;
+        if (overflow <= 0) return;
+
+        var victims = _tokens.ToArray()
+            .OrderBy(kv => kv.Value)
+            .Take(overflow + EvictBatch)
+            .Select(kv => kv.Key);
+        foreach (var key in victims) _tokens.TryRemove(key, out _);
+    }
+
+    public void Dispose() => _sweepTimer.Dispose();
 }
 
 public sealed class AuthMiddleware
@@ -140,6 +172,17 @@ public sealed class AuthMiddleware
         return $"{head} (len={s.Length})";
     }
 
+    // RFC 6750 §3 + §6.2 — the set of <c>error</c> tokens that may appear in
+    // a Bearer <c>WWW-Authenticate</c> challenge. Anything outside this set
+    // is collapsed to <c>invalid_request</c> at the boundary so a future
+    // caller can't accidentally inject syntax into the header value.
+    private static readonly HashSet<string> ValidErrorTokens = new(StringComparer.Ordinal)
+    {
+        "invalid_request",
+        "invalid_token",
+        "insufficient_scope",
+    };
+
     /// <summary>
     /// RFC 6750 + RFC 9728 + MCP 2025-06-18 auth-spec compliant 401 response.
     /// The <c>WWW-Authenticate</c> header points the client at the protected-resource
@@ -152,6 +195,11 @@ public sealed class AuthMiddleware
         var resourceMetadata = $"{origin}/.well-known/oauth-protected-resource";
         var asMetadata       = $"{origin}/.well-known/oauth-authorization-server";
         var tokenEndpoint    = $"{origin}/token";
+
+        // Force the error code into the RFC 6750 allow-list. Today's callers
+        // always pass a valid token, but the header is built by string concat
+        // so a future bad input would land directly in the response.
+        if (!ValidErrorTokens.Contains(error)) error = "invalid_request";
 
         // Quoted-string values inside WWW-Authenticate per RFC 6750 §3.
         var safeDetail = detail.Replace("\\", "\\\\").Replace("\"", "\\\"");
