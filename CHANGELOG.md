@@ -2,6 +2,19 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.22] — 2026-05-13
+
+### Added
+- **Tool-calls filter on the dashboard's "Recent MCP requests" card.** An
+  `All / Tool calls` pill toggle next to the card header restricts the
+  table to `method === "tools/call"` entries. State persists in
+  `localStorage` (`mathmcp.reqs.filter`) so it survives reload. When the
+  filter is active and the buffer holds no tool calls (a common case
+  during MCP discovery flows that only do `initialize` / `tools/list` /
+  `prompts/list`), the empty state explains that and links the user back
+  to the `All` view. Filter also updates the summary line:
+  `Last N tool calls (of M buffered requests)`.
+
 ## [v1.0.21] — 2026-05-13
 
 Second backlog polish pass: low-risk cleanups, no user-visible behavior

@@ -229,6 +229,25 @@ internal static class IndexPage
     color: var(--fg-muted); font-size: 12.5px; text-align: center;
     padding: 16px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
+  .reqs-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0 0 12px;
+  }
+  .reqs-head h2 { margin: 0; }
+  .reqs-filter { display: inline-flex; gap: 0; }
+  .reqs-filter button {
+    background: transparent; color: var(--fg-muted);
+    border: 1px solid var(--border); padding: 3px 10px;
+    font: inherit; font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; cursor: pointer;
+  }
+  .reqs-filter button:first-child { border-radius: 4px 0 0 4px; border-right: none; }
+  .reqs-filter button:last-child  { border-radius: 0 4px 4px 0; }
+  .reqs-filter button:hover { color: var(--fg); }
+  .reqs-filter button.active {
+    background: rgba(124,92,255,0.15); color: var(--accent);
+    border-color: rgba(124,92,255,0.45);
+  }
   footer { color: var(--fg-muted); font-size: 12px; margin-top: 32px; text-align: center; }
   footer a { color: var(--accent-2); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
@@ -482,7 +501,13 @@ internal static class IndexPage
       {{authCard}}
 
       <div class="card" style="grid-column: 1 / -1">
-        <h2>Recent MCP requests</h2>
+        <div class="reqs-head">
+          <h2>Recent MCP requests</h2>
+          <span class="reqs-filter" role="group" aria-label="Filter requests">
+            <button type="button" id="reqs-filter-all" data-filter="all">All</button>
+            <button type="button" id="reqs-filter-tools" data-filter="tools">Tool calls</button>
+          </span>
+        </div>
         <table class="reqs">
           <thead>
             <tr>
@@ -1001,6 +1026,25 @@ internal static class IndexPage
     const tbody = document.getElementById('reqs-tbody');
     const summary = document.getElementById('reqs-summary');
     const initial = {{initialRequestsJson}};
+    let lastItems = initial || [];
+
+    // Filter persistence: "all" (default) | "tools" (tools/call only).
+    const FILTER_KEY = 'mathmcp.reqs.filter';
+    const filterBtns = document.querySelectorAll('.reqs-filter button');
+    let filterMode = localStorage.getItem(FILTER_KEY) === 'tools' ? 'tools' : 'all';
+    function applyFilterButtonState() {
+      filterBtns.forEach(b => {
+        b.classList.toggle('active', b.dataset.filter === filterMode);
+      });
+    }
+    filterBtns.forEach(b => b.addEventListener('click', () => {
+      filterMode = b.dataset.filter === 'tools' ? 'tools' : 'all';
+      localStorage.setItem(FILTER_KEY, filterMode);
+      applyFilterButtonState();
+      render(lastItems);
+    }));
+    applyFilterButtonState();
+
     function statusClass(s) { return s >= 500 ? 'err' : s >= 400 ? 'warn' : 'ok'; }
     function fmtTime(iso) {
       const d = new Date(iso);
@@ -1024,12 +1068,22 @@ internal static class IndexPage
       return i > 0 ? host.slice(0, i) : host;
     }
     function render(items) {
-      if (!items || !items.length) {
+      lastItems = items || [];
+      if (!lastItems.length) {
         tbody.innerHTML = '<tr><td colspan="6"><div class="reqs-empty">No MCP requests yet.</div></td></tr>';
         summary.textContent = '—';
         return;
       }
-      tbody.innerHTML = items.slice(0, 10).map(r => {
+      const filtered = filterMode === 'tools'
+        ? lastItems.filter(r => r.method === 'tools/call')
+        : lastItems;
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="6"><div class="reqs-empty">No tool calls in the recent window. ' +
+          'The buffer holds the last 50 MCP requests (any method); switch to <b>All</b> to see them.</div></td></tr>';
+        summary.textContent = `0 of ${lastItems.length} are tool calls`;
+        return;
+      }
+      tbody.innerHTML = filtered.slice(0, 10).map(r => {
         const host = hostOnly(r.host || '');
         const ip = r.remoteIp || '';
         const c = colorFor(host);
@@ -1048,7 +1102,10 @@ internal static class IndexPage
           `<td class="mono dur">${r.durationMs} ms</td>` +
         `</tr>`;
       }).join('');
-      summary.textContent = `Last ${Math.min(items.length, 10)} requests`;
+      const shown = Math.min(filtered.length, 10);
+      summary.textContent = filterMode === 'tools'
+        ? `Last ${shown} tool calls (of ${lastItems.length} buffered requests)`
+        : `Last ${shown} requests`;
     }
     render(initial);
     async function refresh() {
