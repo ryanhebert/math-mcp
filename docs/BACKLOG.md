@@ -12,12 +12,6 @@ under the version that fixed it.
 
 ## Bugs (deferred)
 
-### B5 — `Config.Save` is not atomic
-`Config.cs` writes config.json via `File.WriteAllText`, which truncates then
-writes. A power loss or process kill mid-write corrupts the file, breaking
-the next service start. **Fix:** write to `config.json.tmp`, then
-`File.Move(tmp, config.json, overwrite: true)`.
-
 ### B6 — WWW-Authenticate header built via string concat
 `Auth.cs:WriteUnauthorized` interpolates `error` directly into the
 `WWW-Authenticate: Bearer error="..."` value. Today `error` is always a
@@ -43,12 +37,6 @@ expires. A misbehaving client looping `/token` can balloon memory.
 **Fix:** background timer for periodic sweep, or cap dictionary size and
 evict oldest.
 
-### B10 — Update banner doesn't ignore pre-release GitHub tags
-`IndexPage.checkUpdate` doesn't check `j.prerelease`. A pre-release like
-`v1.0.15-rc1` would surface in the banner with a download URL that may not
-match our `MathMcp-vX.Y.Z.exe` asset-naming convention. **Fix:**
-`if (j.prerelease) return;`.
-
 ### B11 — `/upgrade` is unauthenticated + CORS allows any origin
 `ServiceHost.cs` mounts `POST /upgrade` with no auth gate, and CORS is
 `AllowAnyOrigin` / `AllowAnyMethod` / `AllowAnyHeader`. Any web page a
@@ -60,25 +48,6 @@ but the CSRF + LAN-reachable surface is more exposed than the prose
 implies. **Fix:** require either the static bearer or an admin-only
 local-loopback check on `/upgrade` (independent of the `/mcp` auth flag),
 and/or restrict CORS for that endpoint to the same origin.
-
-### B12 — `/logs/tail` reads the entire daily log file per request
-`ServiceHost.cs` `sr.ReadToEnd()` slurps the whole file into a string,
-splits, then tails. On a busy server the daily file can be hundreds of
-MB; the dashboard polls every 3s so this allocates and discards that
-much memory continuously and blocks the Kestrel thread on sync I/O.
-**Fix:** seek from end (`fs.Seek(-N, SeekOrigin.End)`) and scan backward
-counting newlines, then read forward; switch to async I/O.
-
-### B13 — `/upgrade` lock can leak permanently
-`ServiceHost.cs` sets `clearLock = false` once the helper batch is
-spawned and `state="restarting"`. If the helper batch fails to actually
-stop+restart the service (e.g., antivirus pins the new file past 10
-retries — the `failMarker` path writes the marker but `sc start` may
-still succeed against the old exe), the current process keeps running.
-`_upgradeInFlight` stays at 1 and every subsequent `/upgrade` returns
-409 until the service is manually restarted. **Fix:** watchdog task or
-`finally` that resets `_upgradeInFlight` if the process hasn't exited
-within N minutes of `state="restarting"`.
 
 ### B14 — `TokenStore.SweepExpired` runs O(N) on every auth check
 `Auth.cs` `IsValid` / `Count` invoke `SweepExpired` which scans the
@@ -103,29 +72,6 @@ writes a new RSA key blob into
 Over years that directory accumulates thousands of orphaned blobs.
 **Fix:** drop `PersistKeySet` and rely on `MachineKeySet` only, or
 explicitly delete the previous key container before importing.
-
-### B17 — Multiple `Authorization` headers concatenate and bypass parsing
-`Auth.cs` `Headers.Authorization.ToString()` joins duplicate headers
-with `, `. Two `Authorization: Bearer ...` headers become
-`"Bearer good, Bearer evil"` → `StartsWith("Bearer ")` succeeds →
-`presented` is `"good, Bearer evil"` → no token matches → 401 (per
-post-fix behavior; the prior bug fell through anonymous). The 401 is
-the right outcome, but the header should be rejected outright as
-malformed when there's more than one value, so misconfigured proxies
-are caught loudly. **Fix:** check `Headers.Authorization.Count > 1` and
-return 400.
-
-### B18 — MCP tool-call logs delayed until response stream closes
-`RequestLogMiddleware.InvokeAsync` writes the log entry (both to the
-ring buffer and to Serilog) AFTER `await _next(context)` returns. For
-Streamable HTTP responses that the MCP SDK emits as `text/event-stream`,
-that's after the SSE stream closes — which for short tool calls is
-fast, but for any long-lived flow means tool calls don't surface in the
-live log until the stream tears down. **Fix:** emit a "request received"
-log line right after `TryParseJsonRpc` succeeds (before `_next`), keep
-the existing post-response line for status/duration. Optionally add the
-first line to the ring buffer too with `status=0 / pending` so the
-dashboard shows in-flight requests.
 
 ---
 

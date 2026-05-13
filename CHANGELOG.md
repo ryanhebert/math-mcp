@@ -2,6 +2,39 @@
 
 All notable changes to the Math MCP Server.
 
+## [v1.0.20] — 2026-05-13
+
+Backlog polish pass: closes the remaining items from the v1.0.18 code
+review that were worth shipping. (B17 and B18 were retired without code
+changes — B17 because v1.0.19's invalid-bearer-→-401 fix also closes the
+multi-Authorization concatenation path, and B18 because a live trace of
+the running server showed tool-call logging works correctly; the
+theoretical SSE delay only applies to long-running tools, which the math
+server doesn't have.)
+
+### Fixed
+- **`/logs/tail` no longer reads the entire daily log file.** Previously
+  every poll (the dashboard polls every 3s) called `StreamReader.ReadToEnd`
+  on the whole file, allocating hundreds of MB once the daily log grew.
+  Now seeks from EOF and scans backward in 8 KB blocks counting newlines,
+  reading only the requested tail. (B12)
+- **Atomic `Config.Save`.** Writes to `config.json.tmp` then `File.Move`
+  with `overwrite: true`, so a power loss or process kill mid-write can
+  no longer leave `config.json` half-written and unparseable. (B5)
+- **`/upgrade` watchdog clears the in-flight lock if the helper stalls.**
+  Once `state="restarting"`, a background task waits 5 minutes; if the
+  service is still alive then (helper hung or silently failed), it
+  releases `_upgradeInFlight` and sets `state="failed"` with a clear
+  message. Previously a stalled helper meant every subsequent `/upgrade`
+  returned 409 until manual service restart. (B13)
+- **Update banner ignores prereleases / drafts.** Defensive `j.prerelease
+  || j.draft` check in both the auto-check and the manual "Check for
+  updates" link. GitHub's `/releases/latest` already excludes prereleases,
+  but the guard means a prerelease can never accidentally surface a
+  download URL that 404s our `MathMcp-vX.Y.Z.exe` naming convention.
+  Manual check now shows `(no stable release available)` in that case.
+  (B10)
+
 ## [v1.0.19] — 2026-05-12
 
 Hardening pass from the v1.0.18 code review. Deferred items are tracked

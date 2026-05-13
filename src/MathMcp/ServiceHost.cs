@@ -408,20 +408,10 @@ public static class ServiceHost
             var filePath = Path.Combine(Installer.LogDir, $"mathmcp-{dateStamp}.log");
             if (!File.Exists(filePath)) return Results.Text("", "text/plain; charset=utf-8");
 
-            string text;
-            using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-            using (var sr = new StreamReader(fs))
-            {
-                text = sr.ReadToEnd();
-            }
-
-            var lines = text.Split('\n');
-            if (lines.Length > count + 1) // +1 for trailing empty
-            {
-                var start = lines.Length - count - 1;
-                if (start < 0) start = 0;
-                text = string.Join('\n', lines.Skip(start));
-            }
+            // Read only the trailing N lines by seeking backward from EOF, so
+            // the dashboard's 3-second poll doesn't allocate the entire daily
+            // log file on each request.
+            var text = ReadLastLines(filePath, count);
             return Results.Text(text, "text/plain; charset=utf-8");
         });
 
@@ -483,6 +473,60 @@ public static class ServiceHost
 
         app.MapGet("/cert.pem", () => Results.File(
             pemBytes, "application/x-pem-file", "mathmcp.pem"));
+    }
+
+    /// <summary>
+    /// Returns the last <paramref name="count"/> newline-terminated lines of
+    /// <paramref name="path"/> by seeking backward from EOF in fixed-size
+    /// blocks and counting newlines. Avoids loading the full file into memory
+    /// (the daily log file routinely exceeds 100 MB on a busy server, and
+    /// <c>/logs/tail</c> is polled every 3 s by the dashboard).
+    /// </summary>
+    private static string ReadLastLines(string path, int count)
+    {
+        const int BlockSize = 8192;
+        using var fs = new FileStream(
+            path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+
+        if (fs.Length == 0) return string.Empty;
+
+        var buffer = new byte[BlockSize];
+        var position = fs.Length;
+        var newlinesRemaining = count;
+        var firstIteration = true;
+        long foundStart = 0;
+        var done = false;
+
+        while (position > 0 && !done)
+        {
+            var toRead = (int)Math.Min(BlockSize, position);
+            position -= toRead;
+            fs.Position = position;
+            fs.ReadExactly(buffer, 0, toRead);
+
+            var scanFrom = toRead - 1;
+            // Skip a trailing newline on the first iteration so it doesn't
+            // count as one of the N lines we're asked to return.
+            if (firstIteration && buffer[scanFrom] == (byte)'\n') scanFrom--;
+            firstIteration = false;
+
+            for (var i = scanFrom; i >= 0; i--)
+            {
+                if (buffer[i] != (byte)'\n') continue;
+                newlinesRemaining--;
+                if (newlinesRemaining == 0)
+                {
+                    foundStart = position + i + 1;
+                    done = true;
+                    break;
+                }
+            }
+        }
+
+        fs.Position = done ? foundStart : 0;
+        using var sr = new StreamReader(fs);
+        return sr.ReadToEnd();
     }
 
     private static string[] ExtractSans(X509Certificate2 cert)
@@ -710,6 +754,23 @@ public static class ServiceHost
                         p?.Id);
                     _upgradeStatus.State = "restarting";
                     clearLock = false; // We got far enough; lock stays set until process dies.
+
+                    // Watchdog: if we're still alive 5 minutes from now, the
+                    // helper either hung or failed silently. Clear the lock
+                    // (so future /upgrade calls aren't permanently blocked at
+                    // 409) and surface the stall in /upgrade/status.
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromMinutes(5));
+                        if (_upgradeStatus.State == "restarting")
+                        {
+                            _upgradeStatus.State = "failed";
+                            _upgradeStatus.Message = "helper did not restart the service within 5 minutes";
+                            logger.LogError(
+                                "Upgrade watchdog: helper did not restart the service within 5 minutes — releasing the in-flight lock");
+                        }
+                        Interlocked.Exchange(ref _upgradeInFlight, 0);
+                    });
                 }
                 catch (Exception ex)
                 {

@@ -33,8 +33,13 @@ public sealed class Config
 
     public void Save(string path)
     {
+        // Atomic write: a power loss or kill mid-write would otherwise leave
+        // config.json half-written and unparseable on the next service start.
+        // Write to a sibling .tmp file, then atomically rename over the target.
         var json = JsonSerializer.Serialize(this, JsonOpts);
-        File.WriteAllText(path, json);
+        var tmpPath = path + ".tmp";
+        File.WriteAllText(tmpPath, json);
+        File.Move(tmpPath, path, overwrite: true);
     }
 }
 

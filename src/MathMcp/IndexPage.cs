@@ -650,6 +650,11 @@ internal static class IndexPage
             { headers: { Accept: 'application/vnd.github+json' } });
           if (!res.ok) return;
           const j = await res.json();
+          // GitHub's /releases/latest already excludes prereleases and drafts,
+          // but be defensive: a prerelease asset wouldn't match our
+          // MathMcp-vX.Y.Z.exe naming convention, so the download URL we'd
+          // generate would 404. Skip it.
+          if (j.prerelease || j.draft) return;
           latest = { tag: j.tag_name, htmlUrl: j.html_url };
           localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: latest }));
         }
@@ -965,6 +970,11 @@ internal static class IndexPage
           { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
         if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
         const j = await res.json();
+        if (j.prerelease || j.draft) {
+          ubCheckResult.textContent = '(no stable release available)';
+          setTimeout(() => { ubCheckResult.textContent = ''; }, 3000);
+          return;
+        }
         const latest = { tag: j.tag_name, htmlUrl: j.html_url };
         localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: latest }));
         const latestSemver = latest.tag.replace(/^v/, '');
