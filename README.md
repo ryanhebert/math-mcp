@@ -1,5 +1,8 @@
 # math-mcp
 
+[![Downloads](https://img.shields.io/github/downloads/ryanhebert/math-mcp/total?logo=github&label=downloads)](https://github.com/ryanhebert/math-mcp/releases)
+[![Latest release](https://img.shields.io/github/v/release/ryanhebert/math-mcp?logo=github&label=latest)](https://github.com/ryanhebert/math-mcp/releases/latest)
+
 A minimal Model Context Protocol (MCP) server for Windows. Exposes four arithmetic tools — `add`, `subtract`, `multiply`, `divide` — over Streamable HTTP on both plain HTTP and HTTPS, running as a Windows Service.
 
 Distributed as a single self-contained `MathMcp.exe`. No .NET runtime install required on the target.
