@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
+using System.ServiceProcess;
 
 namespace MathMcp;
 
@@ -754,15 +755,41 @@ public static class Installer
         });
     }
 
-    /// <summary>Wait until <c>sc query</c> output contains the named state (e.g. "RUNNING", "STOPPED"), or timeout.</summary>
+    /// <summary>
+    /// Wait until the service reaches the named state ("RUNNING" or "STOPPED"),
+    /// or timeout. Queries SCM through <see cref="ServiceController"/> rather than
+    /// scraping <c>sc query</c> text: that output is fully localized on non-English
+    /// Windows (the "STATE" label *and* the state word both translate), so a
+    /// substring match on "RUNNING"/"STOPPED" silently never matches there and the
+    /// wait always times out. The <see cref="ServiceControllerStatus"/> enum is
+    /// numeric and locale-independent.
+    /// </summary>
     private static bool WaitForServiceState(string state, int timeoutSeconds = 30)
     {
+        var want = state.ToUpperInvariant() switch
+        {
+            "RUNNING" => ServiceControllerStatus.Running,
+            "STOPPED" => ServiceControllerStatus.Stopped,
+            _ => throw new ArgumentOutOfRangeException(nameof(state), state, "unsupported wait state"),
+        };
+
         var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
         while (DateTime.UtcNow < deadline)
         {
-            var (exit, stdout, _) = Run("sc.exe", new[] { "query", ServiceName });
-            if (exit != 0) return false; // service doesn't exist
-            if (stdout.Contains(state, StringComparison.OrdinalIgnoreCase)) return true;
+            try
+            {
+                using var sc = new ServiceController(ServiceName);
+                sc.Refresh();
+                if (sc.Status == want) return true;
+            }
+            catch (InvalidOperationException)
+            {
+                // ServiceController throws this when the service does not exist
+                // (its inner exception is the Win32 "service does not exist").
+                // Mirror the old behaviour: a missing service is never going to
+                // reach RUNNING, so bail out instead of spinning to the deadline.
+                return false;
+            }
             Thread.Sleep(500);
         }
         return false;

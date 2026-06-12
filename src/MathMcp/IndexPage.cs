@@ -687,7 +687,9 @@ internal static class IndexPage
 
       if (!latest || !latest.tag) return;
       const latestSemver = latest.tag.replace(/^v/, '');
-      if (cmpVersion(latestSemver, CURRENT) <= 0) return;
+      // Strip any "+build" metadata off CURRENT (e.g. "1.0.24+abc123") so the
+      // compare matches the rest of this script (openModal / the manual check).
+      if (cmpVersion(latestSemver, CURRENT.split('+')[0]) <= 0) return;
 
       // Don't re-show if user dismissed this same version.
       if (localStorage.getItem(DISMISS_KEY) === latest.tag) return;
@@ -1052,9 +1054,8 @@ internal static class IndexPage
       const ms = String(d.getMilliseconds()).padStart(3, '0');
       return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
     }
-    function esc(s) {
-      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    }
+    // esc() is defined once near the top of this script (shared by both the
+    // upgrade terminal and the requests table).
     function colorFor(s) {
       let h = 0;
       const str = s || '-';

@@ -861,16 +861,33 @@ public static class ServiceHost
 
         // Live progress for the in-UI upgrade. Reported state transitions:
         //   idle → downloading → staged → restarting → (process exits)
-        // After the new service comes up, this returns to idle.
-        app.MapGet("/upgrade/status", () => Results.Json(new
+        // A successful upgrade restarts the process, which resets this static
+        // state to idle on its own. A *failed* attempt has no restart to reset
+        // it, so it would otherwise stay "failed" forever and haunt a later,
+        // unrelated dashboard load. We hold "failed" long enough for the polling
+        // upgrade modal to surface it (it polls every ~1-2s), then age it back
+        // to idle after a grace window.
+        app.MapGet("/upgrade/status", () =>
         {
-            state = _upgradeStatus.State,
-            message = _upgradeStatus.Message,
-            target_version = _upgradeStatus.TargetVersion,
-            started_at = _upgradeStatus.StartedAtIso,
-            bytes_downloaded = _upgradeStatus.BytesDownloaded,
-            bytes_total = _upgradeStatus.BytesTotal,
-        }));
+            var s = _upgradeStatus;
+            var state = s.State;
+            if (state == "failed" &&
+                DateTime.TryParse(s.StartedAtIso, null,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var started) &&
+                DateTime.UtcNow - started > TimeSpan.FromMinutes(2))
+            {
+                state = "idle";
+            }
+            return Results.Json(new
+            {
+                state,
+                message = state == "idle" ? null : s.Message,
+                target_version = s.TargetVersion,
+                started_at = s.StartedAtIso,
+                bytes_downloaded = s.BytesDownloaded,
+                bytes_total = s.BytesTotal,
+            });
+        });
     }
 
     private static void TryDelete(string path)
