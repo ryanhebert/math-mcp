@@ -10,6 +10,19 @@ config.json
 certs/
 logs/
 
+# Secrets: encrypted secrets.enc.env is committed; plaintext .env never is.
+.env
+.env.bak
+secrets.enc.env.bak
+
 # Built artifacts: distributed via GitHub Releases, not git.
 /MathMcp.exe
 /MathMcp-v*.exe
+
+# Local workstation and AI-agent files: kept on disk, not published.
+.envrc
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+project.json
+docs/superpowers/
